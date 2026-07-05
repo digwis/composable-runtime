@@ -1,0 +1,23 @@
+name: greet_and_store
+description: 问候用户并将结果存入存储
+
+steps:
+  - name: say-hello
+    capability: greet
+    action: hello
+    input:
+      name: "世界"
+      greeting: "你好"
+
+  - name: save-result
+    capability: store
+    action: set
+    input:
+      key: "last_greeting"
+      value: "${say-hello.message}"
+
+  - name: verify-save
+    capability: store
+    action: get
+    input:
+      key: "last_greeting"

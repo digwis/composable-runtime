@@ -1,0 +1,51 @@
+name: parallel_workflow
+description: 并行执行组 — 同时调用多个能力，汇总结果
+
+steps:
+  - name: init-store
+    capability: store
+    action: set
+    input:
+      key: "status"
+      value: "initialized"
+
+  - name: parallel-tasks
+    parallel:
+      - name: greet-user
+        capability: greet
+        action: hello
+        input:
+          name: "并行世界"
+          greeting: "你好"
+
+      - name: calc-sum
+        capability: compute
+        action: add
+        input:
+          a: 42
+          b: 58
+
+      - name: calc-product
+        capability: compute
+        action: multiply
+        input:
+          a: 7
+          b: 8
+
+  - name: save-greeting
+    capability: store
+    action: set
+    input:
+      key: "greeting"
+      value: "${greet-user.message}"
+
+  - name: save-sum
+    capability: store
+    action: set
+    input:
+      key: "sum"
+      value: "${calc-sum.result}"
+
+  - name: list-all
+    capability: store
+    action: list

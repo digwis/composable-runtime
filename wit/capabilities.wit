@@ -1,0 +1,63 @@
+// WIT 接口定义 — 能力契约规范
+//
+// 这些 WIT 文件描述了每个能力的接口契约，
+// 未来可通过 WASM 组件模型实现跨语言能力组合。
+
+package orchestrator:capabilities;
+
+/// 问候能力接口
+interface greet {
+    // 生成问候语
+    hello: func(name: string, greeting: option<string>) -> string;
+    // 生成告别语
+    goodbye: func(name: string) -> string;
+}
+
+/// 计算能力接口
+interface compute {
+    record compute-input {
+        a: f64,
+        b: f64,
+    }
+
+    record compute-output {
+        result: f64,
+        operation: string,
+        operands: list<f64>,
+    }
+
+    add: func(input: compute-input) -> compute-output;
+    subtract: func(input: compute-input) -> compute-output;
+    multiply: func(input: compute-input) -> compute-output;
+    divide: func(input: compute-input) -> result<compute-output, string>;
+}
+
+/// 存储能力接口
+interface store {
+    set: func(key: string, value: variant) -> bool;
+    get: func(key: string) -> option<variant>;
+    delete: func(key: string) -> bool;
+    list: func() -> list<string>;
+}
+
+/// 消息接口 — 能力间通信的统一协议
+interface message {
+    record msg {
+        id: string,
+        from: option<string>,
+        to: string,
+        action: string,
+        payload: variant,
+    }
+
+    // 发送消息到目标能力
+    send: func(m: msg) -> result<msg, string>;
+}
+
+/// 运行时世界 — 组合所有能力
+world runtime {
+    export greet;
+    export compute;
+    export store;
+    export message;
+}

@@ -1,0 +1,33 @@
+name: retry_and_error_workflow
+description: 重试与错误处理 — 演示重试策略和错误恢复
+
+steps:
+  - name: safe-compute
+    capability: compute
+    action: divide
+    input:
+      a: 100
+      b: 4
+    retry:
+      max_retries: 2
+      delay_ms: 50
+      backoff_multiplier: 2.0
+
+  - name: risky-compute
+    capability: compute
+    action: divide
+    input:
+      a: 100
+      b: 0
+    retry:
+      max_retries: 3
+      delay_ms: 50
+      backoff_multiplier: 1.5
+    on_error: continue
+
+  - name: after-error
+    capability: greet
+    action: hello
+    input:
+      name: "错误后继续"
+      greeting: "你好"

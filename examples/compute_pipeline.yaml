@@ -1,0 +1,35 @@
+name: compute_pipeline
+description: 计算流水线 — 多步运算并将中间结果存入存储
+
+steps:
+  - name: step-1-add
+    capability: compute
+    action: add
+    input:
+      a: 10
+      b: 20
+
+  - name: step-2-save
+    capability: store
+    action: set
+    input:
+      key: "sum"
+      value: "${step-1-add.result}"
+
+  - name: step-3-multiply
+    capability: compute
+    action: multiply
+    input:
+      a: "${step-1-add.result}"
+      b: 2
+
+  - name: step-4-save-product
+    capability: store
+    action: set
+    input:
+      key: "product"
+      value: "${step-3-multiply.result}"
+
+  - name: step-5-list-keys
+    capability: store
+    action: list

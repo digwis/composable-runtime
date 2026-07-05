@@ -1,0 +1,24 @@
+name: conditional_workflow
+description: 条件工作流 — 根据计算结果决定是否存储
+
+steps:
+  - name: calc
+    capability: compute
+    action: add
+    input:
+      a: 5
+      b: 3
+
+  - name: save-if-large
+    capability: store
+    action: set
+    input:
+      key: "large_sum"
+      value: "${calc.result}"
+    condition: "calc.result > 5"
+
+  - name: farewell
+    capability: greet
+    action: goodbye
+    input:
+      name: "计算完成"
