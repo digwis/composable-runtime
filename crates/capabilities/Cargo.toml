@@ -11,3 +11,6 @@ async-trait.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
 tokio.workspace = true
+reqwest = { workspace = true }
+base64 = "0.22"
+uuid = { workspace = true }

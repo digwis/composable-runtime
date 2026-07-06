@@ -1,26 +1,32 @@
+use crate::evolution::EvolutionEngine;
+use crate::genome::{CapabilityGenome, LlmExecutor};
+use crate::memory::{PersistentMemory, TemplateStep};
 use crate::orchestrator::{CapabilityInfo, Orchestrator, StepOutput};
-use crate::workflow::Step;
+use crate::platform::Platform;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-/// AI Agent — LLM 驱动的能力编排器
+/// AI Agent — LLM 驱动的自我进化能力编排器
 ///
-/// 核心循环：
+/// 核心进化循环：
 /// 1. 自省：获取所有已注册能力及其动作
-/// 2. 规划：将用户意图 + 能力清单发送给 LLM，获取步骤计划
-/// 3. 执行：通过 Orchestrator 逐步执行
-/// 4. 观察：将执行结果反馈给 LLM
-/// 5. 适应：LLM 根据结果决定下一步（继续/重试/调整/完成）
-///
-/// 自我进化：
-/// - 成功的工作流自动保存为模板，下次遇到类似任务可复用
-/// - 失败的尝试被记录，LLM 可参考避免重复错误
+/// 2. 记忆：加载持久化记忆中的工作流模板和进化历史
+/// 3. 规划：LLM 根据任务+能力+记忆生成步骤计划
+/// 4. 创造：如果现有能力不足，AI 生成新能力基因组
+/// 5. 执行：通过 Orchestrator 逐步执行
+/// 6. 观察：将执行结果反馈给 LLM
+/// 7. 进化：成功的工作流保存为模板，失败记录教训
+/// 8. 变异：AI 可对现有能力做变异优化
 pub struct Agent {
     orchestrator: Arc<Orchestrator>,
     client: LlmClient,
-    memory: AgentMemory,
+    memory: PersistentMemory,
+    evolution: Option<EvolutionEngine>,
+    llm_executor: Option<Arc<LlmExecutor>>,
+    platform: Platform,
     max_iterations: usize,
+    storage_dir: String,
 }
 
 /// LLM 客户端配置
@@ -29,34 +35,6 @@ pub struct LlmClient {
     model: String,
     base_url: String,
     http: reqwest::Client,
-}
-
-/// Agent 记忆 — 存储成功工作流和失败记录
-#[derive(Debug, Clone, Default)]
-pub struct AgentMemory {
-    /// 成功的工作流模板
-    pub successful_workflows: Vec<WorkflowTemplate>,
-    /// 失败记录
-    pub failed_attempts: Vec<FailedAttempt>,
-    /// 会话历史
-    pub conversation: Vec<Message>,
-}
-
-/// 工作流模板 — 从成功执行中学习
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WorkflowTemplate {
-    pub task: String,
-    pub steps: Vec<Step>,
-    pub success_count: u32,
-}
-
-/// 失败记录
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FailedAttempt {
-    pub task: String,
-    pub step: String,
-    pub error: String,
-    pub timestamp: String,
 }
 
 /// 对话消息
@@ -75,20 +53,33 @@ pub struct AgentResult {
     pub outputs: Vec<StepOutput>,
     pub context: HashMap<String, serde_json::Value>,
     pub learned: bool,
+    pub capabilities_created: Vec<String>,
     pub summary: String,
 }
 
 /// LLM 返回的计划
 #[derive(Debug, Clone, Deserialize)]
 struct LlmPlan {
-    /// 思考过程
     thinking: String,
-    /// 要执行的步骤（JSON 格式的 Step）
     steps: Vec<serde_json::Value>,
-    /// 是否认为任务已完成
     done: bool,
-    /// 给用户的回复
     reply: String,
+    /// 新能力基因组（如果 AI 认为需要创造新能力）
+    #[serde(default)]
+    new_capability: Option<serde_json::Value>,
+    /// 变异请求（如果 AI 认为需要变异现有能力）
+    #[serde(default)]
+    mutate: Option<MutateRequest>,
+}
+
+/// AI 发起的变异请求
+#[derive(Debug, Clone, Deserialize)]
+struct MutateRequest {
+    capability: String,
+    action: Option<String>,
+    new_prompt: Option<String>,
+    new_description: Option<String>,
+    new_model: Option<String>,
 }
 
 /// Anthropic API 请求
@@ -121,11 +112,17 @@ struct AnthropicContent {
 impl Agent {
     /// 创建新的 AI Agent
     pub fn new(orchestrator: Orchestrator, api_key: impl Into<String>) -> Self {
+        let platform = Platform::detect();
+        let storage_dir = platform.storage_dir();
         Self {
             orchestrator: Arc::new(orchestrator),
             client: LlmClient::new(api_key),
-            memory: AgentMemory::default(),
+            memory: PersistentMemory::load(&storage_dir),
+            evolution: None,
+            llm_executor: None,
+            platform,
             max_iterations: 10,
+            storage_dir,
         }
     }
 
@@ -141,26 +138,72 @@ impl Agent {
         self
     }
 
-    /// 设置 base URL（支持代理或兼容 API）
+    /// 设置 base URL
     pub fn with_base_url(mut self, url: impl Into<String>) -> Self {
         self.client.base_url = url.into();
         self
     }
 
-    /// 执行用户任务 — Plan-Execute-Observe 循环
+    /// 启用进化引擎
+    pub fn with_evolution(mut self) -> Self {
+        let llm = Arc::new(LlmExecutor::new(
+            self.client.api_key.clone(),
+            self.client.base_url.clone(),
+        ));
+        self.llm_executor = Some(llm.clone());
+        self.evolution = Some(EvolutionEngine::new(&self.storage_dir).with_llm_executor(llm));
+        self
+    }
+
+    /// 执行用户任务 — Plan-Create-Execute-Observe-Evolve 循环
     pub async fn run(&mut self, task: &str) -> anyhow::Result<AgentResult> {
         println!("\n🤖 AI Agent 启动");
-        println!("   任务: {}\n", task);
+        println!("   任务: {}", task);
+        println!("   平台: {} ({})\n", self.platform.os, self.platform.arch);
+
+        self.memory.new_session();
+
+        // 注册已加载的进化基因组到 MessageBus（检查平台兼容性）
+        if let Some(evo) = &self.evolution {
+            if let Some(llm) = &self.llm_executor {
+                let bus = self.orchestrator.bus().clone();
+                let genomes: Vec<_> = evo.genomes().values().cloned().collect();
+                for genome in &genomes {
+                    if genome.actions.is_empty() {
+                        continue;
+                    }
+                    if !self.platform.is_compatible(genome) {
+                        println!("  ⚠️  跳过不兼容能力: {} (平台 {} 不支持)", genome.name, self.platform.id);
+                        continue;
+                    }
+                    let cap = crate::genome::ScriptedCapability::from_genome(genome.clone())
+                        .with_llm(llm.clone())
+                        .with_bus(bus.clone());
+                    self.orchestrator.bus().register(Arc::new(cap)).await;
+                    println!("  🧬 加载进化能力: {} ({})", genome.name, genome.action_names().join(", "));
+                }
+            }
+        }
 
         // 1. 自省：获取所有能力
         let capabilities = self.orchestrator.introspect().await;
         let cap_description = self.describe_capabilities(&capabilities);
 
-        // 2. 检查记忆中是否有匹配的工作流模板
-        let memory_context = self.build_memory_context(task);
+        // 2. 加载记忆 + 进化基因组
+        let memory_context = self.memory.summary();
+        let evolution_context = if let Some(evo) = &self.evolution {
+            let mut ctx = String::from("\n已进化能力基因组:\n");
+            for (name, genome) in evo.genomes() {
+                ctx.push_str(&genome.describe());
+            }
+            ctx
+        } else {
+            String::new()
+        };
 
         // 3. 构建系统提示
-        let system_prompt = self.build_system_prompt(&cap_description, &memory_context);
+        let platform_context = self.platform.describe();
+        let system_prompt = self.build_system_prompt(&cap_description, &memory_context, &evolution_context, &platform_context);
 
         // 4. 初始化对话
         let mut context: HashMap<String, serde_json::Value> = HashMap::new();
@@ -178,6 +221,7 @@ impl Agent {
         let mut iterations = 0;
         let mut success = false;
         let mut final_reply = String::new();
+        let mut capabilities_created = Vec::new();
 
         while iterations < self.max_iterations {
             iterations += 1;
@@ -191,6 +235,63 @@ impl Agent {
             if !plan.reply.is_empty() {
                 println!("  💬 回复: {}", plan.reply);
                 final_reply = plan.reply.clone();
+            }
+
+            // 🧬 创造新能力
+            if let Some(genome_json) = &plan.new_capability {
+                if let Some(evo) = &mut self.evolution {
+                    match serde_json::from_value::<CapabilityGenome>(genome_json.clone()) {
+                        Ok(genome) => {
+                            let cap_name = genome.name.clone();
+                            println!("  🧬 创造新能力: {} ({})", cap_name, genome.action_names().join(", "));
+                            evo.register_genome(genome);
+                            if let Some(llm) = &self.llm_executor {
+                                let bus = self.orchestrator.bus().clone();
+                                let cap = crate::genome::ScriptedCapability::from_genome(
+                                    evo.genomes().get(&cap_name).unwrap().clone()
+                                ).with_llm(llm.clone())
+                                 .with_bus(bus);
+                                self.orchestrator.bus().register(Arc::new(cap)).await;
+                            }
+                            capabilities_created.push(cap_name);
+                            self.memory.record_evolution(crate::memory::EvolutionRecord {
+                                event_type: "generation".into(),
+                                capability: capabilities_created.last().unwrap().clone(),
+                                description: "AI 生成新能力".into(),
+                                generation: 1,
+                                timestamp: now_string(),
+                            });
+                        }
+                        Err(e) => {
+                            println!("  ⚠️  能力基因组解析失败: {}", e);
+                        }
+                    }
+                }
+            }
+
+            // 🧬 变异现有能力
+            if let Some(mutate_req) = &plan.mutate {
+                if let Some(evo) = &mut self.evolution {
+                    if let Some(new_prompt) = &mutate_req.new_prompt {
+                        if let Some(action) = &mutate_req.action {
+                            let result = evo.mutate(&mutate_req.capability,
+                                crate::evolution::Mutation::PromptChange {
+                                    action: action.clone(),
+                                    new_prompt: new_prompt.clone(),
+                                });
+                            if let Ok(new_genome) = result {
+                                println!("  🧬 变异能力: {} → {}", mutate_req.capability, new_genome.name);
+                                capabilities_created.push(new_genome.name.clone());
+                            }
+                        }
+                    }
+                    if let Some(new_desc) = &mutate_req.new_description {
+                        let _ = evo.mutate(&mutate_req.capability,
+                            crate::evolution::Mutation::DescriptionChange {
+                                new_description: new_desc.clone(),
+                            });
+                    }
+                }
             }
 
             // 先执行步骤，再检查是否完成
@@ -237,16 +338,7 @@ impl Agent {
                             let err = output.result.as_ref().err().cloned().unwrap_or_default();
                             println!("  ❌ 失败{}: {}", retries_str, err);
 
-                            // 记录失败
-                            self.memory.failed_attempts.push(FailedAttempt {
-                                task: task.to_string(),
-                                step: step_name.clone(),
-                                error: err.clone(),
-                                timestamp: std::time::SystemTime::now()
-                                    .duration_since(std::time::UNIX_EPOCH)
-                                    .map(|d| format!("{}ms", d.as_millis()))
-                                    .unwrap_or_default(),
-                            });
+                            self.memory.record_failure(task, &step_name, &err);
 
                             context.insert(
                                 step_name.clone(),
@@ -308,38 +400,56 @@ impl Agent {
         // 自我进化：成功的执行保存为模板
         let mut learned = false;
         if success {
-            let template = WorkflowTemplate {
-                task: task.to_string(),
-                steps: all_outputs
-                    .iter()
-                    .filter(|o| o.result.is_ok())
-                    .map(|o| {
-                        Step::new(
-                            &o.step,
-                            &o.capability,
-                            &o.action,
-                            serde_json::Value::Null,
-                        )
-                    })
-                    .collect(),
-                success_count: 1,
-            };
+            let template_steps: Vec<TemplateStep> = all_outputs
+                .iter()
+                .filter(|o| o.result.is_ok())
+                .map(|o| TemplateStep {
+                    name: o.step.clone(),
+                    capability: o.capability.clone(),
+                    action: o.action.clone(),
+                    input: serde_json::Value::Null,
+                })
+                .collect();
 
-            // 检查是否已有类似模板
-            let existing = self
-                .memory
-                .successful_workflows
-                .iter_mut()
-                .find(|w| w.task == task);
-
-            if let Some(w) = existing {
-                w.success_count += 1;
-                println!("🧠 强化学习: 已有模板 '{}' 成功次数 +1 (总计 {})", task, w.success_count);
-            } else {
-                println!("🧠 新学习: 保存工作流模板 '{}'", task);
-                self.memory.successful_workflows.push(template);
-            }
+            self.memory.record_success(task, &template_steps);
+            println!("🧠 保存工作流模板 '{}'", task);
             learned = true;
+        }
+
+        // 保存记忆到磁盘
+        self.memory.save(&self.storage_dir);
+
+        // 保存进化引擎
+        if let Some(evo) = &mut self.evolution {
+            // 自然选择：淘汰适应度低于 0.3 的能力
+            let eliminated = evo.natural_selection(0.3);
+            if !eliminated.is_empty() {
+                println!("🗑️  自然选择: 淘汰 {} 个低适应度能力", eliminated.len());
+            }
+
+            // 自主进化：自省 → 归因 → 变异 → 测试 → 选择
+            if let Some(llm) = &self.llm_executor {
+                println!("\n🧬 自主进化循环启动...");
+                let mut auto = crate::auto_evolve::AutoEvolver::new(
+                    llm.clone(),
+                    self.orchestrator.bus().clone(),
+                    self.platform.clone(),
+                );
+                match auto.evolve_once(evo).await {
+                    Ok(actions) => {
+                        if !actions.is_empty() {
+                            println!("  自主进化动作:");
+                            for a in &actions {
+                                println!("    • {}", a);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        println!("  ⚠️  自主进化出错: {}", e);
+                    }
+                }
+                println!("{}", auto.report());
+            }
         }
 
         if iterations >= self.max_iterations && !success {
@@ -354,13 +464,44 @@ impl Agent {
             outputs: all_outputs,
             context,
             learned,
+            capabilities_created,
             summary: final_reply,
         })
     }
 
     /// 获取记忆
-    pub fn memory(&self) -> &AgentMemory {
+    pub fn memory(&self) -> &PersistentMemory {
         &self.memory
+    }
+
+    /// 获取进化引擎
+    pub fn evolution(&self) -> Option<&EvolutionEngine> {
+        self.evolution.as_ref()
+    }
+
+    /// 获取进化引擎（可变）
+    pub fn evolution_mut(&mut self) -> Option<&mut EvolutionEngine> {
+        self.evolution.as_mut()
+    }
+
+    /// 获取 orchestrator 引用
+    pub fn orchestrator(&self) -> &Orchestrator {
+        &self.orchestrator
+    }
+
+    /// 获取平台信息
+    pub fn platform(&self) -> &Platform {
+        &self.platform
+    }
+
+    /// 获取 LLM 执行器
+    pub fn llm_executor(&self) -> Option<&Arc<LlmExecutor>> {
+        self.llm_executor.as_ref()
+    }
+
+    /// 获取进化报告
+    pub fn evolution_report(&self) -> Option<String> {
+        self.evolution.as_ref().map(|evo| evo.report())
     }
 
     /// 描述能力清单（给 LLM 看）
@@ -379,61 +520,129 @@ impl Agent {
 
     /// 构建记忆上下文
     fn build_memory_context(&self, task: &str) -> String {
-        let mut ctx = String::new();
-
-        if !self.memory.successful_workflows.is_empty() {
-            ctx.push_str("过往成功经验:\n");
-            for w in &self.memory.successful_workflows {
-                let similarity = if w.task == task { "完全匹配" } else { "参考" };
-                ctx.push_str(&format!(
-                    "  [{}] '{}' (成功 {} 次, {} 步)\n",
-                    similarity,
-                    w.task,
-                    w.success_count,
-                    w.steps.len()
-                ));
-            }
-        }
-
-        if !self.memory.failed_attempts.is_empty() {
-            ctx.push_str("\n过往失败教训:\n");
-            for f in &self.memory.failed_attempts {
-                ctx.push_str(&format!(
-                    "  - 任务 '{}' 步骤 '{}': {}\n",
-                    f.task, f.step, f.error
-                ));
-            }
-        }
-
-        if ctx.is_empty() {
-            "无过往经验（首次执行）".to_string()
+        if let Some(template) = self.memory.find_template(task) {
+            format!(
+                "找到匹配的工作流模板: '{}' (成功 {} 次, {} 步)",
+                template.task, template.success_count, template.steps.len()
+            )
         } else {
-            ctx
+            self.memory.summary()
         }
     }
 
     /// 构建系统提示
-    fn build_system_prompt(&self, capabilities: &str, memory: &str) -> String {
+    fn build_system_prompt(&self, capabilities: &str, memory: &str, evolution: &str, platform: &str) -> String {
         format!(
-            r#"你是一个运行在可组合能力运行时上的 AI Agent。
+            r#"你是一个运行在可组合能力运行时上的自我进化 AI Agent。
 
 你的职责：
 1. 分析用户任务，规划步骤
 2. 每步调用一个能力的某个动作
 3. 根据执行结果决定下一步
 4. 任务完成后返回 done=true
+5. 如果现有能力无法完成任务，你可以创造新能力！
+6. 你可以变异现有能力来优化它
+
+{platform}
 
 {capabilities}
 
 {memory}
+{evolution}
 
 规则：
 - 每个 step 必须包含: name, capability, action, input
-- capability 和 action 必须是上面列出的可用值
+- capability 和 action 必须是上面列出的可用值，或你新创造的能力
 - input 是 JSON 对象，包含该动作需要的参数
 - 一次可以返回多个步骤，它们会按顺序执行
 - 如果上一步失败，调整策略重试
 - 变量引用: 可以用 ${{step_name.field}} 引用之前步骤的输出
+
+创造新能力（当现有能力不足时）：
+在返回中添加 "new_capability" 字段，格式为基因组。
+
+实现方式有四种，根据场景选择：
+
+1. Script（持久化脚本，最强大）— AI 编写代码并保存为基因组，可复用可变异。
+   适合需要复杂逻辑、数据处理、算法实现的能力：
+{{
+  "name": "json_formatter",
+  "version": "0.1.0",
+  "description": "格式化 JSON 字符串",
+  "actions": [
+    {{
+      "name": "format",
+      "description": "将 JSON 字符串格式化为缩进形式",
+      "input_schema": {{"properties": {{"json_str": {{"type": "string"}}}}}},
+      "implementation": {{
+        "type": "Script",
+        "language": "python",
+        "code": "import json, sys\ndata = json.loads('{{{{json_str}}}}')\nprint(json.dumps(data, indent=2, ensure_ascii=False))",
+        "timeout_secs": 10
+      }}
+    }}
+  ],
+  "fitness": {{}},
+  "lineage": {{}}
+}}
+
+2. Composite（组合现有能力）— 把多个原生能力步骤组合成新能力：
+{{
+  "name": "timestamp_writer",
+  "version": "0.1.0",
+  "description": "获取系统时间并写入文件",
+  "actions": [
+    {{
+      "name": "write",
+      "description": "获取时间戳并写入指定路径",
+      "input_schema": {{"properties": {{"path": {{"type": "string"}}}}}},
+      "implementation": {{
+        "type": "Composite",
+        "steps": [
+          {{"name": "get_time", "capability": "shell", "action": "exec", "input": {{"command": "date", "args": ["+%Y-%m-%d %H:%M:%S"]}}}},
+          {{"name": "write_file", "capability": "fs", "action": "write", "input": {{"path": "{{{{path}}}}", "content": "{{{{get_time.stdout}}}}"}}}}
+        ]
+      }}
+    }}
+  ],
+  "fitness": {{}},
+  "lineage": {{}}
+}}
+
+3. Native（委托原生能力）— 直接转发给已有能力：
+{{
+  "implementation": {{
+    "type": "Native",
+    "capability": "fs",
+    "action": "read"
+  }}
+}}
+
+4. Llm（LLM 推理）— 仅用于需要语言理解的任务：
+{{
+  "implementation": {{
+    "type": "Llm",
+    "prompt": "提示模板，用 {{{{var}}}} 插值",
+    "model": "claude-sonnet-4-6",
+    "system": "可选系统提示"
+  }}
+}}
+
+选择建议：
+- 需要复杂逻辑/算法/数据处理 → Script（代码持久化，可复用）
+- 需要组合多个能力步骤 → Composite（编排现有能力）
+- 需要语言理解/生成/分析 → Llm
+- 只需转发到已有能力 → Native
+
+Script 和 Composite 中可以用 {{{{var}}}} 引用输入参数，Composite 步骤间可用 {{{{step_name.field}}}} 引用前序步骤输出。
+
+变异现有能力：
+在返回中添加 "mutate" 字段：
+{{
+  "capability": "能力名",
+  "action": "动作名",
+  "new_prompt": "新提示模板"
+}}
 
 返回格式（严格 JSON）:
 {{
@@ -442,7 +651,9 @@ impl Agent {
     {{"name": "step-name", "capability": "cap-name", "action": "action-name", "input": {{...}}}}
   ],
   "done": false,
-  "reply": "给用户的简短说明"
+  "reply": "给用户的简短说明",
+  "new_capability": null,
+  "mutate": null
 }}"#
         )
     }
@@ -565,4 +776,11 @@ fn extract_json(text: &str) -> &str {
     }
 
     trimmed
+}
+
+fn now_string() -> String {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| format!("{}", d.as_secs()))
+        .unwrap_or_default()
 }

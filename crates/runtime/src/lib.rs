@@ -1,15 +1,25 @@
 pub mod agent;
+pub mod auto_evolve;
 pub mod capability;
+pub mod evolution;
+pub mod genome;
+pub mod memory;
 pub mod message;
 pub mod message_bus;
 pub mod orchestrator;
+pub mod platform;
 pub mod registry;
 pub mod workflow;
 
-pub use agent::{Agent, AgentMemory, AgentResult};
+pub use agent::{Agent, AgentResult};
+pub use auto_evolve::{AutoEvolver, AutoEvolveStats};
 pub use capability::Capability;
+pub use evolution::{EvolutionEngine, EvolutionEvent, Mutation};
+pub use genome::{CapabilityGenome, ActionGene, ActionImpl, ScriptedCapability, LlmExecutor};
+pub use memory::{PersistentMemory, WorkflowTemplate, TemplateStep};
 pub use message::{Message, MessageBuilder, MessageError, MessageResult};
 pub use message_bus::MessageBus;
 pub use orchestrator::{CapabilityInfo, Orchestrator, OrchestratorBuilder, OrchestratorResult, StepOutput};
+pub use platform::Platform;
 pub use registry::{Registry, RegistryBuilder};
 pub use workflow::{ErrorStrategy, ParallelGroup, RetryPolicy, Step, StepCondition, StepEntry, Workflow};

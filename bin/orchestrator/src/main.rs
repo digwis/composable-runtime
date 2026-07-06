@@ -1,5 +1,8 @@
 use clap::{Parser, Subcommand};
-use capabilities::{ComputeCapability, GreetCapability, StoreCapability};
+use capabilities::{
+    CodeCapability, ComputeCapability, FsCapability, GreetCapability,
+    HttpCapability, ShellCapability, StoreCapability, WebCapability,
+};
 use runtime::{Agent, MessageBus, OrchestratorBuilder, RegistryBuilder, Workflow};
 use std::path::PathBuf;
 use std::collections::HashMap;
@@ -64,12 +67,74 @@ enum Commands {
         max_iterations: usize,
 
         /// LLM 模型
-        #[arg(long, default_value = "claude-sonnet-4-20250514")]
+        #[arg(long, default_value = "claude-sonnet-4-6")]
         model: String,
 
         /// API Base URL（支持代理）
         #[arg(long, default_value = "https://api.anthropic.com")]
         base_url: String,
+
+        /// 启用进化引擎（AI 可创造/变异能力）
+        #[arg(long, default_value_t = true)]
+        evolve: bool,
+    },
+    /// 自主进化 — 不需要用户任务，系统自省并改进已有能力
+    AutoEvolve {
+        /// LLM 模型
+        #[arg(long, default_value = "claude-sonnet-4-6")]
+        model: String,
+
+        /// API Base URL（支持代理）
+        #[arg(long, default_value = "https://api.anthropic.com")]
+        base_url: String,
+
+        /// 运行轮数
+        #[arg(short, long, default_value = "1")]
+        rounds: u32,
+    },
+    /// 持续进化 — 无目标自创生模式，持续运行直到收敛或终止
+    EvolveContinuous {
+        /// LLM 模型
+        #[arg(long, default_value = "claude-sonnet-4-6")]
+        model: String,
+
+        /// API Base URL（支持代理）
+        #[arg(long, default_value = "https://api.anthropic.com")]
+        base_url: String,
+
+        /// 最大轮数
+        #[arg(short, long, default_value = "100")]
+        max_rounds: u32,
+
+        /// 空闲阈值（连续 N 轮无动作则停止）
+        #[arg(short, long, default_value = "3")]
+        idle_threshold: u32,
+
+        /// 轮间隔（秒）
+        #[arg(long, default_value = "5")]
+        interval: u64,
+    },
+    /// 定向进化 — 朝目标方向持续进化
+    EvolveGoal {
+        /// 进化目标
+        #[arg(short, long)]
+        goal: String,
+
+        /// LLM 模型
+        #[arg(long, default_value = "claude-sonnet-4-6")]
+        model: String,
+
+        /// API Base URL（支持代理）
+        #[arg(long, default_value = "https://api.anthropic.com")]
+        base_url: String,
+
+        /// 最大轮数
+        #[arg(short, long, default_value = "20")]
+        max_rounds: u32,
+
+        /// 轮间隔（秒）
+        #[arg(long, default_value = "5")]
+        interval: u64,
     },
 }
 
@@ -78,6 +143,11 @@ fn build_registry() -> MessageBus {
         .with(GreetCapability)
         .with(ComputeCapability)
         .with(StoreCapability::new())
+        .with(FsCapability)
+        .with(ShellCapability)
+        .with(HttpCapability::new())
+        .with(CodeCapability)
+        .with(WebCapability::new())
         .build()
 }
 
@@ -223,7 +293,7 @@ async fn main() -> anyhow::Result<()> {
             }
         }
 
-        Commands::Agent { task, max_iterations, model, base_url } => {
+        Commands::Agent { task, max_iterations, model, base_url, evolve } => {
             let api_key = std::env::var("ANTHROPIC_API_KEY")
                 .or_else(|_| std::env::var("CLAUDE_API_KEY"))
                 .map_err(|_| anyhow::anyhow!(
@@ -240,6 +310,10 @@ async fn main() -> anyhow::Result<()> {
                 .with_model(model)
                 .with_base_url(base_url);
 
+            if evolve {
+                agent = agent.with_evolution();
+            }
+
             let result = agent.run(&task).await?;
 
             println!("════════════════════════════════");
@@ -249,15 +323,18 @@ async fn main() -> anyhow::Result<()> {
             println!("   迭代: {}", result.iterations);
             println!("   步骤: {}", result.outputs.len());
             println!("   学习: {}", if result.learned { "🧠 已保存工作流模板" } else { "无" });
+            if !result.capabilities_created.is_empty() {
+                println!("   🧬 创造/变异能力: {}", result.capabilities_created.join(", "));
+            }
             if !result.summary.is_empty() {
                 println!("   总结: {}", result.summary);
             }
 
             // 显示记忆
             let memory = agent.memory();
-            if !memory.successful_workflows.is_empty() {
+            if !memory.workflow_templates.is_empty() {
                 println!("\n🧠 记忆中的工作流模板:");
-                for w in &memory.successful_workflows {
+                for w in &memory.workflow_templates {
                     println!("   • '{}' (成功 {} 次)", w.task, w.success_count);
                 }
             }
@@ -267,7 +344,192 @@ async fn main() -> anyhow::Result<()> {
                     println!("   • '{}': {}", f.step, f.error);
                 }
             }
+
+            // 显示进化报告
+            if let Some(report) = agent.evolution_report() {
+                println!("\n{}", report);
+            }
             println!();
+        }
+
+        Commands::AutoEvolve { model, base_url, rounds } => {
+            let api_key = std::env::var("ANTHROPIC_API_KEY")
+                .or_else(|_| std::env::var("CLAUDE_API_KEY"))
+                .map_err(|_| anyhow::anyhow!(
+                    "请设置 ANTHROPIC_API_KEY 环境变量\n"
+                ))?;
+
+            let bus = build_registry();
+            let orchestrator = OrchestratorBuilder::new()
+                .with_bus(bus)
+                .build();
+
+            let mut agent = Agent::new(orchestrator, api_key)
+                .with_model(model)
+                .with_base_url(base_url)
+                .with_evolution();
+
+            // 注册已有基因组到总线
+            if let Some(evo) = agent.evolution() {
+                if let Some(llm) = agent.llm_executor() {
+                    let bus = agent.orchestrator().bus().clone();
+                    let genomes: Vec<_> = evo.genomes().values().cloned().collect();
+                    for genome in &genomes {
+                        if genome.actions.is_empty() { continue; }
+                        let cap = runtime::ScriptedCapability::from_genome(genome.clone())
+                            .with_llm(llm.clone())
+                            .with_bus(bus.clone());
+                        agent.orchestrator().bus().register(std::sync::Arc::new(cap)).await;
+                    }
+                }
+            }
+
+            for round in 1..=rounds {
+                println!("\n🧬 ═══ 自主进化 第 {} 轮 ═══", round);
+
+                // 先 clone 需要的值，避免借用冲突
+                let llm = agent.llm_executor().cloned();
+                let bus = agent.orchestrator().bus().clone();
+                let platform = agent.platform().clone();
+
+                if let Some(evo) = agent.evolution_mut() {
+                    if let Some(llm) = &llm {
+                        let mut auto = runtime::AutoEvolver::new(
+                            llm.clone(),
+                            bus.clone(),
+                            platform.clone(),
+                        );
+                        match auto.evolve_once(evo).await {
+                            Ok(actions) => {
+                                if actions.is_empty() {
+                                    println!("  无需进化动作");
+                                } else {
+                                    println!("  自主进化动作:");
+                                    for a in &actions {
+                                        println!("    • {}", a);
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                println!("  ⚠️  自主进化出错: {}", e);
+                            }
+                        }
+                        println!("\n{}", auto.report());
+                    }
+                }
+            }
+
+            // 显示最终进化报告
+            if let Some(report) = agent.evolution_report() {
+                println!("\n{}", report);
+            }
+            println!();
+        }
+
+        Commands::EvolveContinuous { model, base_url, max_rounds, idle_threshold, interval } => {
+            let api_key = std::env::var("ANTHROPIC_API_KEY")
+                .or_else(|_| std::env::var("CLAUDE_API_KEY"))
+                .map_err(|_| anyhow::anyhow!(
+                    "请设置 ANTHROPIC_API_KEY 环境变量\n"
+                ))?;
+
+            let bus = build_registry();
+            let orchestrator = OrchestratorBuilder::new()
+                .with_bus(bus)
+                .build();
+
+            let mut agent = Agent::new(orchestrator, api_key)
+                .with_model(model)
+                .with_base_url(base_url)
+                .with_evolution();
+
+            // 注册已有基因组到总线
+            if let Some(evo) = agent.evolution() {
+                if let Some(llm) = agent.llm_executor() {
+                    let bus = agent.orchestrator().bus().clone();
+                    let genomes: Vec<_> = evo.genomes().values().cloned().collect();
+                    for genome in &genomes {
+                        if genome.actions.is_empty() { continue; }
+                        let cap = runtime::ScriptedCapability::from_genome(genome.clone())
+                            .with_llm(llm.clone())
+                            .with_bus(bus.clone());
+                        agent.orchestrator().bus().register(std::sync::Arc::new(cap)).await;
+                    }
+                }
+            }
+
+            let llm = agent.llm_executor().cloned();
+            let bus = agent.orchestrator().bus().clone();
+            let platform = agent.platform().clone();
+
+            if let Some(evo) = agent.evolution_mut() {
+                if let Some(llm) = &llm {
+                    let mut auto = runtime::AutoEvolver::new(
+                        llm.clone(),
+                        bus,
+                        platform,
+                    );
+                    auto.evolve_continuous(evo, max_rounds, idle_threshold, interval).await
+                        .map_err(|e| anyhow::anyhow!("{}", e))?;
+                }
+            }
+
+            if let Some(report) = agent.evolution_report() {
+                println!("\n{}", report);
+            }
+        }
+
+        Commands::EvolveGoal { goal, model, base_url, max_rounds, interval } => {
+            let api_key = std::env::var("ANTHROPIC_API_KEY")
+                .or_else(|_| std::env::var("CLAUDE_API_KEY"))
+                .map_err(|_| anyhow::anyhow!(
+                    "请设置 ANTHROPIC_API_KEY 环境变量\n"
+                ))?;
+
+            let bus = build_registry();
+            let orchestrator = OrchestratorBuilder::new()
+                .with_bus(bus)
+                .build();
+
+            let mut agent = Agent::new(orchestrator, api_key)
+                .with_model(model)
+                .with_base_url(base_url)
+                .with_evolution();
+
+            // 注册已有基因组到总线
+            if let Some(evo) = agent.evolution() {
+                if let Some(llm) = agent.llm_executor() {
+                    let bus = agent.orchestrator().bus().clone();
+                    let genomes: Vec<_> = evo.genomes().values().cloned().collect();
+                    for genome in &genomes {
+                        if genome.actions.is_empty() { continue; }
+                        let cap = runtime::ScriptedCapability::from_genome(genome.clone())
+                            .with_llm(llm.clone())
+                            .with_bus(bus.clone());
+                        agent.orchestrator().bus().register(std::sync::Arc::new(cap)).await;
+                    }
+                }
+            }
+
+            let llm = agent.llm_executor().cloned();
+            let bus = agent.orchestrator().bus().clone();
+            let platform = agent.platform().clone();
+
+            if let Some(evo) = agent.evolution_mut() {
+                if let Some(llm) = &llm {
+                    let mut auto = runtime::AutoEvolver::new(
+                        llm.clone(),
+                        bus,
+                        platform,
+                    );
+                    auto.evolve_towards(evo, &goal, max_rounds, interval).await
+                        .map_err(|e| anyhow::anyhow!("{}", e))?;
+                }
+            }
+
+            if let Some(report) = agent.evolution_report() {
+                println!("\n{}", report);
+            }
         }
     }
 
