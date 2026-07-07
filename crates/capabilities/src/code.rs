@@ -57,6 +57,10 @@ impl Capability for CodeCapability {
         "代码执行能力 — 运行 Python/Node 代码或脚本文件".to_string()
     }
 
+    fn is_native(&self) -> bool {
+        true
+    }
+
     async fn handle(&self, msg: &Message) -> MessageResult {
         match msg.action.as_str() {
             "run_python" => {

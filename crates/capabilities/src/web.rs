@@ -60,6 +60,10 @@ impl Capability for WebCapability {
         "Web 服务器能力 — 启动/停止静态文件 HTTP 服务".to_string()
     }
 
+    fn is_native(&self) -> bool {
+        true
+    }
+
     async fn handle(&self, msg: &Message) -> MessageResult {
         match msg.action.as_str() {
             "serve" => {

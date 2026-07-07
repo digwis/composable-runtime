@@ -3,9 +3,13 @@ use capabilities::{
     CodeCapability, ComputeCapability, FsCapability, GreetCapability,
     HttpCapability, ShellCapability, StoreCapability, WebCapability,
 };
-use runtime::{Agent, MessageBus, OrchestratorBuilder, RegistryBuilder, Workflow};
+use runtime::{
+    Agent, LlmExecutor, MessageBus, McpServer, OrchestratorBuilder, Platform, RegistryBuilder, Workflow,
+    Daemon, DaemonConfig, discover_llm_backends,
+};
 use std::path::PathBuf;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 #[derive(Parser)]
 #[command(name = "orch")]
@@ -136,6 +140,93 @@ enum Commands {
         #[arg(long, default_value = "5")]
         interval: u64,
     },
+    /// MCP Server — 通过 Model Context Protocol 暴露进化引擎给 Agent
+    ///
+    /// 启动 stdio JSON-RPC server，Agent（如 Claude Desktop）可调用 18 个原子 tool
+    /// 进行自省、归因、变异、测试等进化操作。与 CLI 共享同一份 genomes.json。
+    Mcp {
+        /// LLM 模型
+        #[arg(long, default_value = "claude-sonnet-4-6")]
+        model: String,
+
+        /// API Base URL（支持代理）
+        #[arg(long, default_value = "https://api.anthropic.com")]
+        base_url: String,
+
+        /// 存储目录（默认使用平台标准目录，与 CLI 共享 genomes.json）
+        #[arg(long)]
+        storage: Option<PathBuf>,
+    },
+    /// Daemon — 系统级常驻进化运行时
+    ///
+    /// 启动 Unix socket server + PATH 注入 + 后台进化循环。
+    /// 任何 AI 工具（Claude/Cursor/Devin）可通过 ~/.orch/bin/ 下的可执行文件
+    /// 或 Unix socket 自动使用进化能力。
+    Daemon {
+        /// LLM 模型
+        #[arg(long, default_value = "claude-sonnet-4-6")]
+        model: String,
+
+        /// API Base URL（支持代理）
+        #[arg(long, default_value = "https://api.anthropic.com")]
+        base_url: String,
+
+        /// 存储目录（默认 ~/.orch/）
+        #[arg(long)]
+        storage: Option<PathBuf>,
+
+        /// 进化循环间隔（秒）
+        #[arg(long, default_value_t = 300)]
+        interval: u64,
+
+        /// 最大进化轮次
+        #[arg(long, default_value_t = 100)]
+        max_rounds: u32,
+    },
+    /// Autonomous — 自主模式（单次感知→目标→执行）
+    ///
+    /// 主动感知环境状态，自主生成目标，调用能力执行。
+    /// 不启动 daemon，执行一轮后退出。
+    Autonomous {
+        /// API Base URL（支持代理，OpenAI 兼容接口如 https://api.iamhc.cn）
+        #[arg(long, default_value = "claude")]
+        base_url: String,
+
+        /// LLM 模型名
+        #[arg(long, default_value = "glm-5.1")]
+        model: String,
+
+        /// 存储目录（默认 ~/.orch/）
+        #[arg(long)]
+        storage: Option<PathBuf>,
+    },
+    /// 查看已发现的 LLM 后端
+    Discover,
+}
+
+/// 获取 API key — devin 模式或未设置时返回空字符串
+///
+/// - base_url == "devin": 通过 `devin -p` CLI 调用 LLM，不需要 api_key
+/// - MCP server: client-side 路径（get_*_context + register_genome）不需要 api_key
+/// - 其他情况: 需要 ANTHROPIC_API_KEY 或 CLAUDE_API_KEY 环境变量
+fn get_api_key(base_url: &str) -> String {
+    if base_url == "devin" || base_url == "claude" {
+        return String::new();
+    }
+    // 优先使用通用 ORCH_API_KEY
+    if let Ok(key) = std::env::var("ORCH_API_KEY") {
+        return key;
+    }
+    match std::env::var("ANTHROPIC_API_KEY").or_else(|_| std::env::var("CLAUDE_API_KEY")) {
+        Ok(key) => key,
+        Err(_) => {
+            tracing::warn!(
+                "未设置 ORCH_API_KEY/ANTHROPIC_API_KEY/CLAUDE_API_KEY — server-side LLM 工具将不可用，\
+                 请使用 client-side 路径或设置 --base-url devin"
+            );
+            String::new()
+        }
+    }
 }
 
 fn build_registry() -> MessageBus {
@@ -294,11 +385,7 @@ async fn main() -> anyhow::Result<()> {
         }
 
         Commands::Agent { task, max_iterations, model, base_url, evolve } => {
-            let api_key = std::env::var("ANTHROPIC_API_KEY")
-                .or_else(|_| std::env::var("CLAUDE_API_KEY"))
-                .map_err(|_| anyhow::anyhow!(
-                    "请设置 ANTHROPIC_API_KEY 环境变量\n"
-                ))?;
+            let api_key = get_api_key(&base_url);
 
             let bus = build_registry();
             let orchestrator = OrchestratorBuilder::new()
@@ -353,11 +440,7 @@ async fn main() -> anyhow::Result<()> {
         }
 
         Commands::AutoEvolve { model, base_url, rounds } => {
-            let api_key = std::env::var("ANTHROPIC_API_KEY")
-                .or_else(|_| std::env::var("CLAUDE_API_KEY"))
-                .map_err(|_| anyhow::anyhow!(
-                    "请设置 ANTHROPIC_API_KEY 环境变量\n"
-                ))?;
+            let api_key = get_api_key(&base_url);
 
             let bus = build_registry();
             let orchestrator = OrchestratorBuilder::new()
@@ -427,11 +510,7 @@ async fn main() -> anyhow::Result<()> {
         }
 
         Commands::EvolveContinuous { model, base_url, max_rounds, idle_threshold, interval } => {
-            let api_key = std::env::var("ANTHROPIC_API_KEY")
-                .or_else(|_| std::env::var("CLAUDE_API_KEY"))
-                .map_err(|_| anyhow::anyhow!(
-                    "请设置 ANTHROPIC_API_KEY 环境变量\n"
-                ))?;
+            let api_key = get_api_key(&base_url);
 
             let bus = build_registry();
             let orchestrator = OrchestratorBuilder::new()
@@ -480,11 +559,7 @@ async fn main() -> anyhow::Result<()> {
         }
 
         Commands::EvolveGoal { goal, model, base_url, max_rounds, interval } => {
-            let api_key = std::env::var("ANTHROPIC_API_KEY")
-                .or_else(|_| std::env::var("CLAUDE_API_KEY"))
-                .map_err(|_| anyhow::anyhow!(
-                    "请设置 ANTHROPIC_API_KEY 环境变量\n"
-                ))?;
+            let api_key = get_api_key(&base_url);
 
             let bus = build_registry();
             let orchestrator = OrchestratorBuilder::new()
@@ -529,6 +604,227 @@ async fn main() -> anyhow::Result<()> {
 
             if let Some(report) = agent.evolution_report() {
                 println!("\n{}", report);
+            }
+        }
+
+        Commands::Mcp { model, base_url, storage } => {
+            let api_key = get_api_key(&base_url);
+
+            // 平台探测 + 存储目录（与 CLI 共享 genomes.json）
+            let platform = Platform::detect();
+            let storage_dir = storage.unwrap_or_else(|| PathBuf::from(platform.storage_dir()));
+            std::fs::create_dir_all(&storage_dir)
+                .map_err(|e| anyhow::anyhow!("创建存储目录失败: {}: {}", storage_dir.display(), e))?;
+
+            // 构建 LLM 执行器（行为与 CLI 完全一致）
+            let llm = Arc::new(LlmExecutor::new(api_key, base_url));
+
+            // 注册原生能力到总线（让 MCP 也能调用 greet/compute/fs/shell 等能力）
+            let bus = Arc::new(build_registry());
+            let native_count = bus.list_capabilities().await.len();
+
+            tracing::info!(
+                "MCP server 启动: storage={}, model={}, native capabilities={}",
+                storage_dir.display(), model, native_count
+            );
+
+            let server = McpServer::new(
+                llm,
+                bus,
+                platform,
+                storage_dir,
+            );
+
+            server.run().await.map_err(|e| anyhow::anyhow!("MCP server 错误: {}", e))?;
+        }
+
+        Commands::Daemon { model, base_url, storage, interval, max_rounds } => {
+            let api_key = get_api_key(&base_url);
+
+            // 设置默认模型供运行时内部使用
+            std::env::set_var("ORCH_MODEL", &model);
+
+            let platform = Platform::detect();
+            let storage_dir = storage.unwrap_or_else(|| PathBuf::from(format!("{}/.orch", std::env::var("HOME").unwrap_or_else(|_| "/tmp".into()))));
+            std::fs::create_dir_all(&storage_dir)
+                .map_err(|e| anyhow::anyhow!("创建存储目录失败: {}: {}", storage_dir.display(), e))?;
+
+            // 构建 LLM 执行器
+            let llm = Arc::new(LlmExecutor::new(api_key, base_url));
+
+            // 构建进化引擎（加载已有 genomes.json）
+            let evo_storage = storage_dir.join(".evolution");
+            std::fs::create_dir_all(&evo_storage).ok();
+
+            // 如果 ~/.orch/.evolution/genomes.json 不存在或为空，尝试从项目级复制
+            let target_genomes = evo_storage.join("genomes.json");
+            let need_copy = !target_genomes.exists()
+                || std::fs::read_to_string(&target_genomes)
+                    .map(|c| c.trim() == "[]" || c.trim().is_empty())
+                    .unwrap_or(true);
+            if need_copy {
+                let local_genomes = PathBuf::from(".evolution/genomes.json");
+                if local_genomes.exists() {
+                    if let Ok(content) = std::fs::read_to_string(&local_genomes) {
+                        if content.trim() != "[]" && !content.trim().is_empty() {
+                            std::fs::write(&target_genomes, &content).ok();
+                            println!("📦 从项目级复制 genomes.json 到 {}", target_genomes.display());
+                        }
+                    }
+                }
+            }
+
+            let evolution = runtime::EvolutionEngine::new(evo_storage);
+
+            // 构建 daemon 配置
+            let config = DaemonConfig {
+                socket_path: storage_dir.join("socket"),
+                bin_dir: storage_dir.join("bin"),
+                storage_dir: storage_dir.clone(),
+                evolution_interval_secs: interval,
+                max_rounds,
+            };
+
+            // 自动发现 LLM 后端
+            let backends = discover_llm_backends();
+            println!("🔍 已发现 LLM 后端:");
+            for b in &backends {
+                println!("   • {} ({:?}) {}", b.name, b.backend_type,
+                    if !b.command.is_empty() { format!("→ {}", b.command) } else { String::new() });
+            }
+
+            // 构建消息总线 + 注册原生能力
+            let bus = Arc::new(build_registry());
+
+            println!("\n🧬 进化运行时 Daemon 启动");
+            println!("   socket: {}", config.socket_path.display());
+            println!("   bin:    {}", config.bin_dir.display());
+            println!("   能力:   {} 个已注册", evolution.genomes().len());
+            println!("   进化间隔: {}s, 最大轮次: {}", interval, max_rounds);
+            println!("\n   按 Ctrl+C 停止\n");
+
+            let mut daemon = Daemon::new(config, bus, evolution, Some(llm), platform);
+            daemon.run().await.map_err(|e| anyhow::anyhow!("Daemon 错误: {}", e))?;
+        }
+
+        Commands::Autonomous { base_url, model, storage } => {
+            let api_key = get_api_key(&base_url);
+            let platform = Platform::detect();
+            let storage_dir = storage.unwrap_or_else(|| PathBuf::from(format!("{}/.orch", std::env::var("HOME").unwrap_or_else(|_| "/tmp".into()))));
+
+            // 设置默认模型供运行时内部使用（LlmExecutor execute_openai 会读取 ORCH_MODEL）
+            std::env::set_var("ORCH_MODEL", &model);
+            let evo_storage = storage_dir.join(".evolution");
+            std::fs::create_dir_all(&evo_storage).ok();
+
+            // 如果 ~/.orch/.evolution/genomes.json 不存在或为空，尝试从项目级复制
+            let target_genomes = evo_storage.join("genomes.json");
+            let need_copy = !target_genomes.exists()
+                || std::fs::read_to_string(&target_genomes)
+                    .map(|c| c.trim() == "[]" || c.trim().is_empty())
+                    .unwrap_or(true);
+            if need_copy {
+                let local_genomes = PathBuf::from(".evolution/genomes.json");
+                if local_genomes.exists() {
+                    if let Ok(content) = std::fs::read_to_string(&local_genomes) {
+                        if content.trim() != "[]" && !content.trim().is_empty() {
+                            std::fs::write(&target_genomes, &content).ok();
+                            println!("📦 从项目级复制 genomes.json 到 {}", target_genomes.display());
+                        }
+                    }
+                }
+            }
+
+            let mut evolution = runtime::EvolutionEngine::new(evo_storage);
+
+            let llm = Arc::new(LlmExecutor::new(api_key, base_url));
+            let bus = Arc::new(build_registry());
+
+            // 注册已有能力
+            let genomes: Vec<_> = evolution.genomes().values().cloned().collect();
+            for genome in &genomes {
+                if genome.actions.is_empty() || !platform.is_compatible(genome) {
+                    continue;
+                }
+                let cap = runtime::ScriptedCapability::from_genome(genome.clone())
+                    .with_llm(llm.clone())
+                    .with_bus(bus.clone());
+                bus.register(Arc::new(cap)).await;
+            }
+
+            println!("\n🤖 自主模式启动");
+            println!("   能力: {} 个已注册", evolution.genomes().len());
+            println!("   平台: {} ({})\n", platform.os, platform.arch);
+
+            let mut auto = runtime::AutonomousRuntime::new(llm, bus, platform);
+
+            // 1. 感知环境
+            println!("👁️  感知环境...");
+            let report = auto.perceive().await;
+            println!("   磁盘: {:.0}%", report.disk_usage_pct);
+            println!("   监听端口: {} 个", report.network_listening.len());
+            println!("   进程: {} 个", report.running_processes.len());
+            if let Some(git) = &report.git_status {
+                println!("   Git: 有变更\n{}", git);
+            }
+            if !report.recent_files.is_empty() {
+                println!("   最近修改文件: {} 个", report.recent_files.len());
+            }
+
+            // 2. 生成目标
+            let caps: Vec<String> = evolution.genomes().keys().cloned().collect();
+            println!("\n🎯 生成目标 (可用能力 {} 个)...", caps.len());
+            let goals = auto.generate_goals(&report, &caps).await;
+
+            if goals.is_empty() {
+                println!("   未生成目标，环境正常或无匹配能力。");
+            } else {
+                for (i, goal) in goals.iter().enumerate() {
+                    println!("   {}. [{}] {}", i + 1, goal.priority, goal.description);
+                    println!("      原因: {}", goal.reason);
+                }
+
+                // 3. 执行目标
+                println!("\n⚙️  执行目标...");
+                for goal in &goals {
+                    println!("\n   ▶ [{}] {}", goal.priority, goal.description);
+                    let result = auto.execute_goal(goal, &mut evolution).await;
+                    if result.success {
+                        println!("   ✅ 成功 ({}ms)", result.elapsed_ms);
+                        if let Some(output) = result.output.get("result") {
+                            println!("   结果: {}", serde_json::to_string_pretty(output).unwrap_or_default());
+                        }
+                    } else {
+                        println!("   ❌ 失败: {}", result.error.as_deref().unwrap_or("未知"));
+                    }
+                }
+            }
+
+            let (successes, failures) = auto.stats();
+            println!("\n📊 自主循环完成: {} 成功, {} 失败", successes, failures);
+        }
+
+        Commands::Discover => {
+            let backends = discover_llm_backends();
+            println!("\n🔍 已发现的 LLM 后端:\n");
+            if backends.is_empty() {
+                println!("  未发现任何 LLM 后端。");
+                println!("  安装 claude CLI: npm install -g @anthropic-ai/claude-code");
+                println!("  或设置 ANTHROPIC_API_KEY 环境变量\n");
+            } else {
+                for b in &backends {
+                    let type_str = match b.backend_type {
+                        runtime::BackendType::Cli => "CLI",
+                        runtime::BackendType::Http => "HTTP API",
+                    };
+                    let cmd_str = if !b.command.is_empty() {
+                        format!(" → {}", b.command)
+                    } else {
+                        String::new()
+                    };
+                    println!("  • {:20} [{}]{}", b.name, type_str, cmd_str);
+                }
+                println!();
             }
         }
     }

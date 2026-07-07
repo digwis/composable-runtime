@@ -31,6 +31,10 @@ impl Capability for ComputeCapability {
         vec!["add", "subtract", "multiply", "divide"]
     }
 
+    fn is_native(&self) -> bool {
+        true
+    }
+
     async fn handle(&self, msg: &Message) -> MessageResult {
         let input: ComputeInput = msg.payload_as()?;
 

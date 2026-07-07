@@ -41,9 +41,32 @@ impl MessageBus {
     }
 
     /// 注册能力到消息总线
+    ///
+    /// 如果同名能力已注册，则跳过（保留旧实例）。
+    /// 这是为了保护运行时累积的适应度数据（runtime_fitness）：
+    /// 重复 register 会用新的 ScriptedCapability 实例覆盖旧实例，
+    /// 而 ScriptedCapability::from_genome 会从 genome.fitness 克隆 runtime_fitness，
+    /// 导致旧实例在内存中累积的适应度数据丢失。
+    ///
+    /// 变异体和交叉后代使用不同的名字（如 `xxx-v2`），不会与父代冲突。
     pub async fn register(&self, capability: Arc<dyn Capability>) {
         let name = capability.name().to_string();
+        let mut caps = self.capabilities.write().await;
+        if caps.contains_key(&name) {
+            tracing::debug!("能力 '{}' 已注册，跳过重复注册（保留运行时适应度）", name);
+            return;
+        }
         tracing::info!("注册能力: {} v{}", name, capability.version());
+        caps.insert(name, capability);
+    }
+
+    /// 强制覆盖注册（用于需要更新实现的场景，如变异后替换父代）
+    ///
+    /// 注意：这会丢失旧实例的运行时适应度，调用方应先通过 `__fitness__` 动作
+    /// 获取并持久化旧适应度。
+    pub async fn register_force(&self, capability: Arc<dyn Capability>) {
+        let name = capability.name().to_string();
+        tracing::info!("强制覆盖能力: {} v{}", name, capability.version());
         self.capabilities.write().await.insert(name, capability);
     }
 
@@ -85,6 +108,11 @@ impl MessageBus {
     /// 列出所有已注册能力
     pub async fn list_capabilities(&self) -> Vec<String> {
         self.capabilities.read().await.keys().cloned().collect()
+    }
+
+    /// 获取能力引用（用于查询 is_native 等类型信息）
+    pub async fn get_capability(&self, name: &str) -> Option<Arc<dyn Capability>> {
+        self.capabilities.read().await.get(name).cloned()
     }
 
     /// 能力自省 — 返回所有能力的详细信息

@@ -1,5 +1,6 @@
-use crate::genome::{CapabilityGenome, FitnessGene, LineageGene, Origin, MutationRecord, ScriptedCapability, LlmExecutor};
+use crate::genome::{CapabilityGenome, FitnessGene, LineageGene, Origin, ScriptedCapability, LlmExecutor};
 use crate::message_bus::MessageBus;
+use crate::meta_evolve::ExecutorRegistry;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -19,6 +20,8 @@ pub struct EvolutionEngine {
     storage_dir: PathBuf,
     /// LLM 执行器（用于脚本化能力）
     llm_executor: Option<Arc<LlmExecutor>>,
+    /// 执行器注册表（用于 Custom 类型能力 — 元进化产物）
+    executor_registry: Option<Arc<ExecutorRegistry>>,
     /// 进化历史
     history: Vec<EvolutionEvent>,
 }
@@ -41,6 +44,7 @@ impl EvolutionEngine {
             genomes: HashMap::new(),
             storage_dir,
             llm_executor: None,
+            executor_registry: None,
             history: Vec::new(),
         };
         engine.load();
@@ -50,6 +54,12 @@ impl EvolutionEngine {
     /// 设置 LLM 执行器
     pub fn with_llm_executor(mut self, executor: Arc<LlmExecutor>) -> Self {
         self.llm_executor = Some(executor);
+        self
+    }
+
+    /// 设置执行器注册表（元进化产物）
+    pub fn with_executor_registry(mut self, registry: Arc<ExecutorRegistry>) -> Self {
+        self.executor_registry = Some(registry);
         self
     }
 
@@ -238,6 +248,9 @@ impl EvolutionEngine {
         if let Some(llm) = &self.llm_executor {
             cap = cap.with_llm(llm.clone());
         }
+        if let Some(registry) = &self.executor_registry {
+            cap = cap.with_executor_registry(registry.clone());
+        }
 
         bus.register(Arc::new(cap)).await;
         Ok(())
@@ -252,6 +265,9 @@ impl EvolutionEngine {
             let mut cap = ScriptedCapability::from_genome(genome.clone());
             if let Some(llm) = &self.llm_executor {
                 cap = cap.with_llm(llm.clone());
+            }
+            if let Some(registry) = &self.executor_registry {
+                cap = cap.with_executor_registry(registry.clone());
             }
             bus.register(Arc::new(cap)).await;
             tracing::info!("注册进化能力: {}", name);
@@ -300,30 +316,34 @@ impl EvolutionEngine {
         report
     }
 
-    /// 保存到磁盘
-    fn save(&self) {
+    /// 保存到磁盘（原子写入：先写临时文件，再 rename）
+    ///
+    /// 原子化持久化是保护进化记忆的关键：
+    /// 非原子写入在写入途中崩溃会导致 JSON 损坏，
+    /// 进而丢失全部进化成果（基因组、适应度、谱系）。
+    pub fn save(&self) {
         std::fs::create_dir_all(&self.storage_dir).ok();
-        
+
         // 保存基因组
         let genomes_path = self.storage_dir.join("genomes.json");
         let genomes: Vec<_> = self.genomes.values().cloned().collect();
         if let Ok(json) = serde_json::to_string_pretty(&genomes) {
-            std::fs::write(&genomes_path, json).ok();
+            atomic_write(&genomes_path, &json);
         }
 
         // 保存进化历史
         let history_path = self.storage_dir.join("evolution_history.json");
         if let Ok(json) = serde_json::to_string_pretty(&self.history) {
-            std::fs::write(&history_path, json).ok();
+            atomic_write(&history_path, &json);
         }
     }
 
-    /// 仅保存基因组适应度（轻量级持久化）
+    /// 仅保存基因组适应度（轻量级持久化，原子写入）
     pub fn save_fitness(&self) {
         let genomes_path = self.storage_dir.join("genomes.json");
         let genomes: Vec<_> = self.genomes.values().cloned().collect();
         if let Ok(json) = serde_json::to_string_pretty(&genomes) {
-            std::fs::write(&genomes_path, json).ok();
+            atomic_write(&genomes_path, &json);
         }
     }
 
@@ -392,4 +412,16 @@ fn now_string() -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| format!("{}", d.as_secs()))
         .unwrap_or_default()
+}
+
+/// 原子写入文件：先写入临时文件，再 rename 到目标路径
+///
+/// rename 在同一文件系统上是原子的，保证要么完整写入要么不变。
+/// 这样即使写入途中崩溃，也不会损坏现有文件。
+fn atomic_write(path: &std::path::Path, content: &str) {
+    let tmp_path = path.with_extension("tmp");
+    if std::fs::write(&tmp_path, content).is_err() {
+        return;
+    }
+    let _ = std::fs::rename(&tmp_path, path);
 }

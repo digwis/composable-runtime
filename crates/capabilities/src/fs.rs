@@ -97,6 +97,10 @@ impl Capability for FsCapability {
         "文件系统能力 — 读写文件、创建目录、列出内容、删除、移动".to_string()
     }
 
+    fn is_native(&self) -> bool {
+        true
+    }
+
     async fn handle(&self, msg: &Message) -> MessageResult {
         match msg.action.as_str() {
             "read" => {

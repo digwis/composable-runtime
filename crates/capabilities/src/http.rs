@@ -81,6 +81,10 @@ impl Capability for HttpCapability {
         "HTTP 能力 — 发起 GET/POST/PUT/DELETE 请求、下载文件".to_string()
     }
 
+    fn is_native(&self) -> bool {
+        true
+    }
+
     async fn handle(&self, msg: &Message) -> MessageResult {
         match msg.action.as_str() {
             "get" | "post" | "put" | "delete" => {

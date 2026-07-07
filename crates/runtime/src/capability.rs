@@ -38,4 +38,15 @@ pub trait Capability: Send + Sync {
             self.actions()
         )
     }
+
+    /// 是否为原生能力（Rust 编译实现，不可变异）
+    ///
+    /// 原生能力没有基因组，不参与进化引擎的变异/淘汰/适应度同步。
+    /// ScriptedCapability 返回 false，原生实现返回 true。
+    ///
+    /// 用类型方法替代硬编码的 `["greet", "compute", ...]` 字符串列表——
+    /// 后者每新增原生能力都要记得改列表，是典型的不变量被防御性代码掩盖。
+    fn is_native(&self) -> bool {
+        false
+    }
 }

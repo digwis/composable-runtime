@@ -67,6 +67,10 @@ impl Capability for StoreCapability {
         vec!["set", "get", "delete", "list"]
     }
 
+    fn is_native(&self) -> bool {
+        true
+    }
+
     async fn handle(&self, msg: &Message) -> MessageResult {
         match msg.action.as_str() {
             "set" => {

@@ -48,10 +48,51 @@ impl Platform {
             env.insert("shell".to_string(), shell);
         }
 
-        // 检测可用的运行时
-        for tool in &["python3", "node", "git", "docker"] {
+        // 检测可用的运行时和工具
+        for tool in &[
+            "python3", "node", "git", "docker",
+            "curl", "wget", "sqlite3", "jq", "ffmpeg",
+            "rg", "fd", "fzf", "tmux", "ssh",
+            "make", "cmake", "rustc", "cargo",
+            "brew", "pip3", "npm",
+            "wasmtime",
+        ] {
             if which(tool) {
                 env.insert(format!("has_{}", tool), "true".to_string());
+            }
+        }
+
+        // 检测 rustc 的 wasm32-wasi target（兼容新旧名称）
+        if which("rustc") {
+            let has_wasi = std::process::Command::new("rustc")
+                .args(&["--print", "target-list"])
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::null())
+                .output()
+                .map(|o| {
+                    String::from_utf8_lossy(&o.stdout)
+                        .lines()
+                        .any(|line| line == "wasm32-wasi" || line == "wasm32-wasip1")
+                })
+                .unwrap_or(false);
+            if has_wasi {
+                env.insert("has_wasm32_wasi".to_string(), "true".to_string());
+            }
+        }
+
+        // 检测可用的 Python 包
+        if which("python3") {
+            for pkg in &["numpy", "pandas", "requests", "matplotlib", "sympy", "networkx", "sklearn"] {
+                let check = std::process::Command::new("python3")
+                    .args(&["-c", &format!("import {}", pkg)])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status()
+                    .map(|s| s.success())
+                    .unwrap_or(false);
+                if check {
+                    env.insert(format!("has_py_{}", pkg), "true".to_string());
+                }
             }
         }
 

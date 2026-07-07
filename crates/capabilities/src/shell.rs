@@ -60,6 +60,10 @@ impl Capability for ShellCapability {
         "Shell 能力 — 执行系统命令、管理环境变量".to_string()
     }
 
+    fn is_native(&self) -> bool {
+        true
+    }
+
     async fn handle(&self, msg: &Message) -> MessageResult {
         match msg.action.as_str() {
             "exec" => {

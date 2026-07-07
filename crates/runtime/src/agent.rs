@@ -1,6 +1,7 @@
 use crate::evolution::EvolutionEngine;
 use crate::genome::{CapabilityGenome, LlmExecutor};
 use crate::memory::{PersistentMemory, TemplateStep};
+use crate::meta_evolve::ExecutorRegistry;
 use crate::orchestrator::{CapabilityInfo, Orchestrator, StepOutput};
 use crate::platform::Platform;
 use serde::{Deserialize, Serialize};
@@ -24,6 +25,7 @@ pub struct Agent {
     memory: PersistentMemory,
     evolution: Option<EvolutionEngine>,
     llm_executor: Option<Arc<LlmExecutor>>,
+    executor_registry: Option<Arc<ExecutorRegistry>>,
     platform: Platform,
     max_iterations: usize,
     storage_dir: String,
@@ -35,6 +37,12 @@ pub struct LlmClient {
     model: String,
     base_url: String,
     http: reqwest::Client,
+    /// 是否使用 CLI 后端（devin 或 claude）
+    use_cli: bool,
+    /// CLI 命令名（"devin" 或 "claude"）
+    cli_cmd: String,
+    /// CLI 使用的模型
+    cli_model: String,
 }
 
 /// 对话消息
@@ -120,6 +128,7 @@ impl Agent {
             memory: PersistentMemory::load(&storage_dir),
             evolution: None,
             llm_executor: None,
+            executor_registry: None,
             platform,
             max_iterations: 10,
             storage_dir,
@@ -138,9 +147,9 @@ impl Agent {
         self
     }
 
-    /// 设置 base URL
+    /// 设置 base URL（自动检测 devin 模式）
     pub fn with_base_url(mut self, url: impl Into<String>) -> Self {
-        self.client.base_url = url.into();
+        self.client.set_base_url(url);
         self
     }
 
@@ -150,8 +159,14 @@ impl Agent {
             self.client.api_key.clone(),
             self.client.base_url.clone(),
         ));
+        let registry = Arc::new(ExecutorRegistry::new(&self.storage_dir));
         self.llm_executor = Some(llm.clone());
-        self.evolution = Some(EvolutionEngine::new(&self.storage_dir).with_llm_executor(llm));
+        self.executor_registry = Some(registry.clone());
+        self.evolution = Some(
+            EvolutionEngine::new(&self.storage_dir)
+                .with_llm_executor(llm)
+                .with_executor_registry(registry),
+        );
         self
     }
 
@@ -176,9 +191,12 @@ impl Agent {
                         println!("  ⚠️  跳过不兼容能力: {} (平台 {} 不支持)", genome.name, self.platform.id);
                         continue;
                     }
-                    let cap = crate::genome::ScriptedCapability::from_genome(genome.clone())
+                    let mut cap = crate::genome::ScriptedCapability::from_genome(genome.clone())
                         .with_llm(llm.clone())
                         .with_bus(bus.clone());
+                    if let Some(registry) = &self.executor_registry {
+                        cap = cap.with_executor_registry(registry.clone());
+                    }
                     self.orchestrator.bus().register(Arc::new(cap)).await;
                     println!("  🧬 加载进化能力: {} ({})", genome.name, genome.action_names().join(", "));
                 }
@@ -193,7 +211,7 @@ impl Agent {
         let memory_context = self.memory.summary();
         let evolution_context = if let Some(evo) = &self.evolution {
             let mut ctx = String::from("\n已进化能力基因组:\n");
-            for (name, genome) in evo.genomes() {
+            for (_name, genome) in evo.genomes() {
                 ctx.push_str(&genome.describe());
             }
             ctx
@@ -247,10 +265,13 @@ impl Agent {
                             evo.register_genome(genome);
                             if let Some(llm) = &self.llm_executor {
                                 let bus = self.orchestrator.bus().clone();
-                                let cap = crate::genome::ScriptedCapability::from_genome(
+                                let mut cap = crate::genome::ScriptedCapability::from_genome(
                                     evo.genomes().get(&cap_name).unwrap().clone()
                                 ).with_llm(llm.clone())
                                  .with_bus(bus);
+                                if let Some(registry) = &self.executor_registry {
+                                    cap = cap.with_executor_registry(registry.clone());
+                                }
                                 self.orchestrator.bus().register(Arc::new(cap)).await;
                             }
                             capabilities_created.push(cap_name);
@@ -678,6 +699,15 @@ Script 和 Composite 中可以用 {{{{var}}}} 引用输入参数，Composite 步
 
     /// 调用 LLM
     async fn call_llm(&self, system: &str, messages: &[Message]) -> anyhow::Result<LlmPlan> {
+        // CLI 后端（devin 或 claude）
+        if self.client.use_cli {
+            let text = self.client.call_cli(system, messages).await?;
+            let json_str = extract_json(&text);
+            let plan: LlmPlan = serde_json::from_str(json_str)
+                .map_err(|e| anyhow::anyhow!("LLM 返回解析失败: {} | 原始: {}", e, text))?;
+            return Ok(plan);
+        }
+
         let anthropic_messages: Vec<AnthropicMessage> = messages
             .iter()
             .map(|m| AnthropicMessage {
@@ -740,7 +770,62 @@ impl LlmClient {
             model: "claude-sonnet-4-20250514".into(),
             base_url: "https://api.anthropic.com".into(),
             http: reqwest::Client::new(),
+            use_cli: false,
+            cli_cmd: String::new(),
+            cli_model: std::env::var("CLAUDE_MODEL")
+                .or_else(|_| std::env::var("DEVIN_MODEL"))
+                .unwrap_or_else(|_| "sonnet".to_string()),
         }
+    }
+
+    /// 设置 base URL，同时更新 CLI 模式检测
+    fn set_base_url(&mut self, url: impl Into<String>) {
+        let url_str = url.into();
+        match url_str.as_str() {
+            "devin" => {
+                self.use_cli = true;
+                self.cli_cmd = "devin".to_string();
+            }
+            "claude" => {
+                self.use_cli = true;
+                self.cli_cmd = "claude".to_string();
+            }
+            _ => {
+                self.use_cli = false;
+            }
+        }
+        self.base_url = url_str;
+    }
+
+    /// 通过 CLI（devin 或 claude）执行 LLM 调用
+    async fn call_cli(&self, system: &str, messages: &[Message]) -> anyhow::Result<String> {
+        let mut full_prompt = if !system.is_empty() {
+            format!("{}\n\n", system)
+        } else {
+            String::new()
+        };
+        for msg in messages {
+            full_prompt.push_str(&format!("[{}] {}\n", msg.role, msg.content));
+        }
+
+        let result = tokio::process::Command::new(&self.cli_cmd)
+            .args(&["-p", &full_prompt, "--model", &self.cli_model])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .output()
+            .await
+            .map_err(|e| anyhow::anyhow!("{} CLI 执行失败: {}", self.cli_cmd, e))?;
+
+        if !result.status.success() {
+            let stderr = String::from_utf8_lossy(&result.stderr);
+            anyhow::bail!("{} CLI 错误: {}", self.cli_cmd, stderr.trim());
+        }
+
+        let text = String::from_utf8_lossy(&result.stdout).to_string();
+        if text.trim().is_empty() {
+            anyhow::bail!("{} CLI 返回空输出", self.cli_cmd);
+        }
+        Ok(text)
     }
 }
 
