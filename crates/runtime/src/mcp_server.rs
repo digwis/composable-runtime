@@ -369,8 +369,8 @@ impl McpServer {
         let name = params.get_string("name")?;
         let evolver = self.state.auto_evolver.lock().await;
         let evolution = self.state.evolution.lock().await;
-        let pass = evolver.test_capability(&evolution, &name).await;
-        Ok(serde_json::json!({ "pass": pass }))
+        let (pass, test_input) = evolver.test_capability(&evolution, &name).await;
+        Ok(serde_json::json!({ "pass": pass, "test_input": test_input }))
     }
 
     async fn tool_eliminate_dormant(&self) -> Result<Value, String> {

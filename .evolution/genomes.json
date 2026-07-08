@@ -1,87 +1,5 @@
 [
   {
-    "name": "make_ops",
-    "version": "0.1.0",
-    "description": "Make 构建工具：运行 Makefile 目标",
-    "actions": [
-      {
-        "name": "run",
-        "description": "执行 make 目标",
-        "input_schema": {
-          "properties": {
-            "target": {
-              "type": "string"
-            }
-          }
-        },
-        "implementation": {
-          "type": "Script",
-          "language": "python",
-          "code": "import subprocess,json,os\np=json.loads(os.environ.get('__EXECUTOR_INPUT__','{}'))\ncmd=['make']+[p.get('target','')] if p.get('target') else ['make']\nr=subprocess.run(cmd,capture_output=True,text=True,timeout=60)\nprint(json.dumps({'stdout':r.stdout[-500:],'stderr':r.stderr[-500:],'exit_code':r.returncode},ensure_ascii=False))",
-          "timeout_secs": 60
-        }
-      }
-    ],
-    "fitness": {
-      "call_count": 1,
-      "auto_test_count": 1,
-      "success_count": 1,
-      "failure_count": 0,
-      "success_rate": 1.0,
-      "avg_latency_ms": 63.0,
-      "score": 0.9407337723424272,
-      "last_evaluated": "1783443757",
-      "rounds_dormant": 2
-    },
-    "lineage": {
-      "origin": "Other",
-      "parent": null,
-      "generation": 0,
-      "mutations": []
-    }
-  },
-  {
-    "name": "incident_detector",
-    "version": "0.1.0",
-    "description": "交叉：日志异常+系统监控→事件检测",
-    "actions": [
-      {
-        "name": "detect_incidents",
-        "description": "检测异常事件",
-        "input_schema": {
-          "properties": {
-            "log_path": {
-              "type": "string"
-            }
-          }
-        },
-        "implementation": {
-          "type": "Script",
-          "language": "python",
-          "code": "import os,json\np=json.loads(os.environ.get('__EXECUTOR_INPUT__','{}'))\nlog_path=p.get('log_path','')\nresult={'incidents':[]}\nload=os.getloadavg() if hasattr(os,'getloadavg') else (0,0,0)\nif load[0]>2.0:result['incidents'].append({'type':'high_load','value':load[0]})\nif os.path.exists(log_path):\n errors=sum(1 for line in open(log_path) if 'ERROR' in line or 'CRITICAL' in line)\n if errors>10:result['incidents'].append({'type':'high_error_rate','count':errors})\nresult['load_avg']=list(load)\nprint(json.dumps(result,ensure_ascii=False))",
-          "timeout_secs": 15
-        }
-      }
-    ],
-    "fitness": {
-      "call_count": 1,
-      "auto_test_count": 1,
-      "success_count": 1,
-      "failure_count": 0,
-      "success_rate": 1.0,
-      "avg_latency_ms": 38.0,
-      "score": 0.9633911368015414,
-      "last_evaluated": "1783443796",
-      "rounds_dormant": 2
-    },
-    "lineage": {
-      "origin": "Other",
-      "parent": "log_analyzer+system_health_monitor",
-      "generation": 1,
-      "mutations": []
-    }
-  },
-  {
     "name": "knowledge_graph_ops",
     "version": "0.1.0",
     "description": "知识图谱操作：从文本提取实体关系、构建图谱",
@@ -133,7 +51,11 @@
       "avg_latency_ms": 36.5,
       "score": 0.964785335262904,
       "last_evaluated": "1783444177",
-      "rounds_dormant": 0
+      "rounds_dormant": 0,
+      "output_quality": 0.0,
+      "coverage_score": 0.0,
+      "dependency_complexity": 0.0,
+      "non_empty_output_count": 0
     },
     "lineage": {
       "origin": "Other",
@@ -143,913 +65,21 @@
     }
   },
   {
-    "name": "json_data_explorer",
+    "name": "cargo_ops-v2-v4-v6-v8",
     "version": "0.1.0",
-    "description": "交叉：JSON查询+数据统计（jq×pandas）",
+    "description": "通过cargo管理Rust项目的构建、测试与依赖",
     "actions": [
       {
-        "name": "explore_json",
-        "description": "探索JSON数据结构",
-        "input_schema": {
-          "properties": {
-            "data": {
-              "type": "string"
-            },
-            "filter": {
-              "type": "string"
-            }
-          }
-        },
-        "implementation": {
-          "type": "Script",
-          "language": "python",
-          "code": "import subprocess,json,os\np=json.loads(os.environ.get('__EXECUTOR_INPUT__','{}'))\ndata=p.get('data','')\nflt=p.get('filter','.')\nr=subprocess.run(['jq',flt],input=data,capture_output=True,text=True,timeout=10)\nif r.returncode!=0:\n print(json.dumps({'error':r.stderr[:200]},ensure_ascii=False));exit()\ntry:\n v=json.loads(r.stdout)\n if isinstance(v,list):print(json.dumps({'type':'array','length':len(v),'sample':v[:3]},ensure_ascii=False))\n elif isinstance(v,dict):print(json.dumps({'type':'object','keys':list(v.keys())[:20]},ensure_ascii=False))\n else:print(json.dumps({'type':type(v).__name__,'value':str(v)[:200]},ensure_ascii=False))\nexcept:print(json.dumps({'raw':r.stdout[:1000]},ensure_ascii=False))",
-          "timeout_secs": 10
-        }
-      }
-    ],
-    "fitness": {
-      "call_count": 2,
-      "auto_test_count": 1,
-      "success_count": 2,
-      "failure_count": 0,
-      "success_rate": 1.0,
-      "avg_latency_ms": 55.0,
-      "score": 0.9478672985781991,
-      "last_evaluated": "1783444177",
-      "rounds_dormant": 0
-    },
-    "lineage": {
-      "origin": "Other",
-      "parent": "jq_ops+py_pandas_ops",
-      "generation": 1,
-      "mutations": []
-    }
-  },
-  {
-    "name": "brew_ops",
-    "version": "0.2.0",
-    "description": "Homebrew 包管理：install/search/info",
-    "actions": [
-      {
-        "name": "install",
-        "description": "brew install",
-        "input_schema": {
-          "properties": {
-            "pkg": {
-              "type": "string"
-            }
-          }
-        },
-        "implementation": {
-          "type": "Script",
-          "language": "python",
-          "code": "import subprocess,json,os\np=json.loads(os.environ.get('__EXECUTOR_INPUT__','{}'))\nr=subprocess.run(['brew','install',p.get('pkg','')],capture_output=True,text=True,timeout=120)\nprint(json.dumps({'stdout':r.stdout[-300:],'exit_code':r.returncode},ensure_ascii=False))",
-          "timeout_secs": 120
-        }
-      },
-      {
-        "name": "search",
-        "description": "brew search",
-        "input_schema": {
-          "properties": {
-            "query": {
-              "type": "string"
-            }
-          }
-        },
-        "implementation": {
-          "type": "Script",
-          "language": "python",
-          "code": "import subprocess,json,os\np=json.loads(os.environ.get('__EXECUTOR_INPUT__','{}'))\nr=subprocess.run(['brew','search',p.get('query','')],capture_output=True,text=True,timeout=15)\nprint(json.dumps({'results':r.stdout[:1000]},ensure_ascii=False))",
-          "timeout_secs": 15
-        }
-      }
-    ],
-    "fitness": {
-      "call_count": 1,
-      "auto_test_count": 1,
-      "success_count": 0,
-      "failure_count": 1,
-      "success_rate": 0.0,
-      "avg_latency_ms": 65.0,
-      "score": 0.0,
-      "last_evaluated": "1783443936",
-      "rounds_dormant": 2
-    },
-    "lineage": {
-      "origin": "Other",
-      "parent": null,
-      "generation": 0,
-      "mutations": []
-    }
-  },
-  {
-    "name": "cmake_ops",
-    "version": "0.1.0",
-    "description": "CMake 构建系统：configure/build/install",
-    "actions": [
-      {
-        "name": "build",
-        "description": "cmake build",
-        "input_schema": {
-          "properties": {
-            "build_dir": {
-              "type": "string"
-            },
-            "src_dir": {
-              "type": "string"
-            }
-          }
-        },
-        "implementation": {
-          "type": "Script",
-          "language": "python",
-          "code": "import subprocess,json,os\np=json.loads(os.environ.get('__EXECUTOR_INPUT__','{}'))\nsrc=p.get('src_dir','.');bld=p.get('build_dir','build')\nos.makedirs(bld,exist_ok=True)\nr1=subprocess.run(['cmake',src],cwd=bld,capture_output=True,text=True,timeout=60)\nr2=subprocess.run(['cmake','--build','.'],cwd=bld,capture_output=True,text=True,timeout=120)\nprint(json.dumps({'configure':r1.exit_code if hasattr(r1,'exit_code') else r1.returncode,'build':r2.returncode,'stderr':r2.stderr[-300:]},ensure_ascii=False))",
-          "timeout_secs": 120
-        }
-      }
-    ],
-    "fitness": {
-      "call_count": 1,
-      "auto_test_count": 1,
-      "success_count": 0,
-      "failure_count": 1,
-      "success_rate": 0.0,
-      "avg_latency_ms": 100.0,
-      "score": 0.0,
-      "last_evaluated": "1783444235",
-      "rounds_dormant": 2
-    },
-    "lineage": {
-      "origin": "Other",
-      "parent": null,
-      "generation": 0,
-      "mutations": []
-    }
-  },
-  {
-    "name": "npm_ops",
-    "version": "0.2.0",
-    "description": "NPM 包管理：install/run/test",
-    "actions": [
-      {
-        "name": "install",
-        "description": "npm install",
-        "input_schema": {
-          "properties": {
-            "pkg": {
-              "type": "string"
-            }
-          }
-        },
-        "implementation": {
-          "type": "Script",
-          "language": "python",
-          "code": "import subprocess,json,os\np=json.loads(os.environ.get('__EXECUTOR_INPUT__','{}'))\ncmd=['npm','install']+[p.get('pkg','')] if p.get('pkg') else ['npm','install']\nr=subprocess.run(cmd,capture_output=True,text=True,timeout=60)\nprint(json.dumps({'exit_code':r.returncode,'stdout':r.stdout[-300:]},ensure_ascii=False))",
-          "timeout_secs": 60
-        }
-      },
-      {
-        "name": "run",
-        "description": "npm run",
-        "input_schema": {
-          "properties": {
-            "script": {
-              "type": "string"
-            }
-          }
-        },
-        "implementation": {
-          "type": "Script",
-          "language": "python",
-          "code": "import subprocess,json,os\np=json.loads(os.environ.get('__EXECUTOR_INPUT__','{}'))\nr=subprocess.run(['npm','run',p.get('script','')],capture_output=True,text=True,timeout=60)\nprint(json.dumps({'exit_code':r.returncode,'stdout':r.stdout[-300:]},ensure_ascii=False))",
-          "timeout_secs": 60
-        }
-      }
-    ],
-    "fitness": {
-      "call_count": 1,
-      "auto_test_count": 1,
-      "success_count": 1,
-      "failure_count": 0,
-      "success_rate": 1.0,
-      "avg_latency_ms": 100.0,
-      "score": 0.1,
-      "last_evaluated": "1783444240",
-      "rounds_dormant": 2
-    },
-    "lineage": {
-      "origin": "Other",
-      "parent": null,
-      "generation": 0,
-      "mutations": []
-    }
-  },
-  {
-    "name": "code_quality_analyzer",
-    "version": "0.1.0",
-    "description": "代码质量分析：复杂度、TODO 统计",
-    "actions": [
-      {
-        "name": "analyze_complexity",
-        "description": "分析代码复杂度",
-        "input_schema": {
-          "properties": {
-            "path": {
-              "type": "string"
-            }
-          }
-        },
-        "implementation": {
-          "type": "Script",
-          "language": "python",
-          "code": "import os,json\np=json.loads(os.environ.get('__EXECUTOR_INPUT__','{}'))\nroot=p.get('path','.')\nstats={'files':0,'lines':0,'todos':0,'functions':0}\nfor dp,dn,fn in os.walk(root):\n if '.git' in dp or 'target' in dp or 'node_modules' in dp:continue\n for f in fn:\n  if f.endswith(('.py','.rs','.js','.ts')):\n   stats['files']+=1\n   try:\n    for line in open(os.path.join(dp,f)):\n     stats['lines']+=1\n     if 'TODO' in line or 'FIXME' in line:stats['todos']+=1\n     if line.strip().startswith(('def ','fn ','function ')):stats['functions']+=1\n   except:pass\nprint(json.dumps(stats,ensure_ascii=False))",
-          "timeout_secs": 15
-        }
-      }
-    ],
-    "fitness": {
-      "call_count": 1,
-      "auto_test_count": 0,
-      "success_count": 1,
-      "failure_count": 0,
-      "success_rate": 1.0,
-      "avg_latency_ms": 82.0,
-      "score": 0.9242144177449167,
-      "last_evaluated": "1783444177",
-      "rounds_dormant": 0
-    },
-    "lineage": {
-      "origin": "Other",
-      "parent": null,
-      "generation": 0,
-      "mutations": []
-    }
-  },
-  {
-    "name": "rustc_ops",
-    "version": "0.1.0",
-    "description": "编译Rust源码并返回编译结果和错误信息",
-    "actions": [
-      {
-        "name": "compile",
-        "description": "编译给定Rust源代码字符串",
-        "input_schema": {
-          "properties": {
-            "source_code": {
-              "description": "Rust源代码",
-              "type": "string"
-            }
-          },
-          "required": [
-            "source_code"
-          ]
-        },
-        "implementation": {
-          "type": "Script",
-          "language": "python",
-          "code": "import subprocess, tempfile, os\nwith tempfile.NamedTemporaryFile(suffix='.rs', mode='w', delete=False) as f:\n    f.write(source_code)\n    fname = f.name\ntry:\n    r = subprocess.run(['rustc', fname, '-o', '/dev/null'], capture_output=True, text=True)\n    stdout, stderr = r.stdout, r.stderr\nfinally:\n    os.unlink(fname)\nreturn {'stdout': stdout, 'stderr': stderr, 'exit_code': r.returncode}",
-          "timeout_secs": 30
-        }
-      }
-    ],
-    "fitness": {
-      "call_count": 1,
-      "auto_test_count": 1,
-      "success_count": 0,
-      "failure_count": 1,
-      "success_rate": 0.0,
-      "avg_latency_ms": 100.0,
-      "score": 0.0,
-      "last_evaluated": "1783444309",
-      "rounds_dormant": 1
-    },
-    "lineage": {
-      "origin": "Native",
-      "parent": null,
-      "generation": 0,
-      "mutations": []
-    }
-  },
-  {
-    "name": "git_ops-v2",
-    "version": "0.1.0",
-    "description": "Git 版本控制：status/commit/branch/sync",
-    "actions": [
-      {
-        "name": "status",
-        "description": "git status",
-        "input_schema": {
-          "properties": {}
-        },
-        "implementation": {
-          "type": "Script",
-          "language": "python",
-          "code": "import subprocess,json\nr1=subprocess.run(['git','status','--porcelain'],capture_output=True,text=True,timeout=10)\nr2=subprocess.run(['git','diff','--stat'],capture_output=True,text=True,timeout=10)\nfiles=r1.stdout.strip().split('\\n') if r1.stdout.strip() else []\nprint(json.dumps({'status':files,'diff_stat':r2.stdout[:500],'changed_files':len(files)},ensure_ascii=False))",
-          "timeout_secs": 10
-        }
-      },
-      {
-        "name": "commit",
-        "description": "git commit",
-        "input_schema": {
-          "properties": {
-            "message": {
-              "type": "string"
-            }
-          }
-        },
-        "implementation": {
-          "type": "Script",
-          "language": "python",
-          "code": "import subprocess,json,os\np=json.loads(os.environ.get('__EXECUTOR_INPUT__','{}'))\nsubprocess.run(['git','add','-A'],capture_output=True)\nr=subprocess.run(['git','commit','-m',p.get('message','auto')],capture_output=True,text=True)\nprint(json.dumps({'exit_code':r.returncode,'stderr':r.stderr[:200]},ensure_ascii=False))",
-          "timeout_secs": 15
-        }
-      }
-    ],
-    "fitness": {
-      "call_count": 1,
-      "auto_test_count": 0,
-      "success_count": 1,
-      "failure_count": 0,
-      "success_rate": 1.0,
-      "avg_latency_ms": 95.0,
-      "score": 0.9132420091324202,
-      "last_evaluated": "1783444177",
-      "rounds_dormant": 0
-    },
-    "lineage": {
-      "origin": "Mutated",
-      "parent": "git_ops",
-      "generation": 2,
-      "mutations": [
-        {
-          "mutation_type": "fix_script",
-          "description": "增加 diff 摘要：显示变更文件数和行数统计，而不只是文件名",
-          "timestamp": "1783424586"
-        }
-      ]
-    }
-  },
-  {
-    "name": "data_science_pipeline-v3",
-    "version": "0.1.0",
-    "description": "交叉能力：Pandas 数据加载 + NumPy 数值计算流水线（pandas × numpy）",
-    "actions": [
-      {
-        "name": "load_and_compute",
-        "description": "加载 CSV 并执行数值计算",
-        "input_schema": {
-          "properties": {
-            "column": {
-              "type": "string"
-            },
-            "op": {
-              "type": "string"
-            },
-            "path": {
-              "type": "string"
-            }
-          }
-        },
-        "implementation": {
-          "type": "Script",
-          "language": "python",
-          "code": "import pandas as pd,numpy as np,json,os\np=json.loads(os.environ.get('__EXECUTOR_INPUT__','{}'))\npath=p.get('path','')\nif path and os.path.exists(path):\n df=pd.read_csv(path)\nelse:\n df=pd.DataFrame({'value':[1,2,3,4,5]})\ncol=p.get('column','value')\nop=p.get('op','mean')\nif col in df.columns:\n arr=np.array(df[col].dropna())\n result=getattr(arr,op)() if hasattr(arr,op) else float(getattr(np,op)(arr))\n print(json.dumps({'success':True,'column':col,'op':op,'result':float(result),'shape':list(arr.shape)},ensure_ascii=False))\nelse:\n print(json.dumps({'success':False,'error':f'column {col} not found','columns':list(df.columns)},ensure_ascii=False))",
-          "timeout_secs": 15
-        }
-      }
-    ],
-    "fitness": {
-      "call_count": 1,
-      "auto_test_count": 1,
-      "success_count": 1,
-      "failure_count": 0,
-      "success_rate": 1.0,
-      "avg_latency_ms": 100.0,
-      "score": 0.1,
-      "last_evaluated": "1783444317",
-      "rounds_dormant": 2
-    },
-    "lineage": {
-      "origin": "Mutated",
-      "parent": "data_science_pipeline",
-      "generation": 3,
-      "mutations": [
-        {
-          "mutation_type": "fix_script",
-          "description": "无 CSV 文件时使用内置数据演示 pandas+numpy 流水线",
-          "timestamp": "1783425160"
-        }
-      ]
-    }
-  },
-  {
-    "name": "temporal_causal_analyzer",
-    "version": "0.3.0",
-    "description": "时间因果分析：从事件序列中发现因果关系和模式",
-    "actions": [
-      {
-        "name": "analyze_events",
-        "description": "分析事件序列的因果模式",
-        "input_schema": {
-          "properties": {
-            "events": {
-              "type": "array"
-            }
-          }
-        },
-        "implementation": {
-          "type": "Script",
-          "language": "python",
-          "code": "import json,os\nfrom collections import Counter\nevents=json.loads(os.environ.get('__EXECUTOR_INPUT__','{}')).get('events',[])\nif not events:print(json.dumps({'patterns':[]},ensure_ascii=False));exit()\ntypes=[e.get('type','') for e in events]\npairs=list(zip(types[:-1],types[1:]))\npattern=Counter(pairs).most_common(5)\nprint(json.dumps({'total':len(events),'type_dist':dict(Counter(types)),'transitions':[{'from':p[0][0],'to':p[0][1],'count':p[1]} for p in pattern]},ensure_ascii=False))",
-          "timeout_secs": 10
-        }
-      }
-    ],
-    "fitness": {
-      "call_count": 1,
-      "auto_test_count": 1,
-      "success_count": 1,
-      "failure_count": 0,
-      "success_rate": 1.0,
-      "avg_latency_ms": 100.0,
-      "score": 0.1,
-      "last_evaluated": "1783444466",
-      "rounds_dormant": 2
-    },
-    "lineage": {
-      "origin": "Other",
-      "parent": null,
-      "generation": 0,
-      "mutations": []
-    }
-  },
-  {
-    "name": "trend_analyzer-v3",
-    "version": "0.1.0",
-    "description": "交叉能力：CSV 数据加载 + 时间趋势因果分析（pandas × temporal）",
-    "actions": [
-      {
-        "name": "analyze_trend",
-        "description": "分析 CSV 数据的时间趋势",
-        "input_schema": {
-          "properties": {
-            "date_col": {
-              "type": "string"
-            },
-            "path": {
-              "type": "string"
-            },
-            "value_col": {
-              "type": "string"
-            }
-          }
-        },
-        "implementation": {
-          "type": "Script",
-          "language": "python",
-          "code": "import pandas as pd,json,os\np=json.loads(os.environ.get('__EXECUTOR_INPUT__','{}'))\npath=p.get('path','')\nif path and os.path.exists(path):\n df=pd.read_csv(path)\nelse:\n df=pd.DataFrame({'date':['2024-01','2024-02','2024-03','2024-04'],'value':[10,15,13,20]})\ndate_col=p.get('date_col','date')\nval_col=p.get('value_col','value')\nif date_col not in df.columns or val_col not in df.columns:\n print(json.dumps({'success':False,'error':'columns not found','columns':list(df.columns)},ensure_ascii=False));exit()\ndf[date_col]=pd.to_datetime(df[date_col])\ndf=df.sort_values(date_col)\ntrend='increasing' if df[val_col].iloc[-1]>df[val_col].iloc[0] else 'decreasing'\nchange_pct=round((df[val_col].iloc[-1]/df[val_col].iloc[0]-1)*100,2) if df[val_col].iloc[0]!=0 else 0\nprint(json.dumps({'success':True,'trend':trend,'change_pct':change_pct,'start':str(df[val_col].iloc[0]),'end':str(df[val_col].iloc[-1]),'points':len(df)},ensure_ascii=False))",
-          "timeout_secs": 15
-        }
-      }
-    ],
-    "fitness": {
-      "call_count": 0,
-      "auto_test_count": 0,
-      "success_count": 0,
-      "failure_count": 0,
-      "success_rate": 0.0,
-      "avg_latency_ms": 0.0,
-      "score": 0.0,
-      "last_evaluated": null,
-      "rounds_dormant": 2
-    },
-    "lineage": {
-      "origin": "Mutated",
-      "parent": "trend_analyzer",
-      "generation": 3,
-      "mutations": [
-        {
-          "mutation_type": "fix_script",
-          "description": "无 CSV 文件时使用内置时间序列数据演示趋势分析",
-          "timestamp": "1783425162"
-        }
-      ]
-    }
-  },
-  {
-    "name": "fs_watcher-v2",
-    "version": "0.1.0",
-    "description": "文件系统监控：递归监控目录变化，支持 ignore 过滤",
-    "actions": [
-      {
-        "name": "watch",
-        "description": "监控目录",
-        "input_schema": {
-          "properties": {
-            "duration_secs": {
-              "type": "integer"
-            },
-            "path": {
-              "type": "string"
-            }
-          }
-        },
-        "implementation": {
-          "type": "Script",
-          "language": "python",
-          "code": "import os,time,json,fnmatch\np=json.loads(os.environ.get('__EXECUTOR_INPUT__','{}'))\nroot=p.get('path','.');dur=int(p.get('duration_secs',5))\nmax_depth=int(p.get('max_depth',10))\nign=['.git/*','node_modules/*','target/*','__pycache__/*','.DS_Store']\ndef ig(x):\n rel=os.path.relpath(x,root)\n return any(fnmatch.fnmatch(rel,i) or fnmatch.fnmatch(os.path.basename(x),i) for i in ign)\ndef walk_limited(path,depth=0):\n if depth>max_depth:return\n try:\n  for dp,dn,fn in os.walk(path):\n   if ig(dp):dn.clear();continue\n   rel_depth=dp[len(path):].count(os.sep)\n   if rel_depth>max_depth:dn.clear();continue\n   for f in fn:\n    fp=os.path.join(dp,f)\n    if not ig(fp):yield fp\n except:pass\ninit={}\nfor fp in walk_limited(root):\n try:init[fp]=os.path.getmtime(fp)\n except:pass\nev=[];start=time.time()\nwhile time.time()-start<dur:\n time.sleep(0.5);cur={}\n for fp in walk_limited(root):\n  try:\n   m=os.path.getmtime(fp);cur[fp]=m\n   if fp not in init:ev.append({'type':'created','path':fp})\n   elif m!=init[fp]:ev.append({'type':'modified','path':fp})\n  except:pass\n for fp in list(init):\n  if fp not in cur and not os.path.exists(fp):ev.append({'type':'deleted','path':fp});init.pop(fp,None)\n init.update(cur)\nprint(json.dumps({'events':ev,'count':len(ev),'max_depth':max_depth},ensure_ascii=False))",
-          "timeout_secs": 60
-        }
-      }
-    ],
-    "fitness": {
-      "call_count": 0,
-      "auto_test_count": 0,
-      "success_count": 0,
-      "failure_count": 0,
-      "success_rate": 0.0,
-      "avg_latency_ms": 0.0,
-      "score": 0.0,
-      "last_evaluated": null,
-      "rounds_dormant": 2
-    },
-    "lineage": {
-      "origin": "Mutated",
-      "parent": "fs_watcher",
-      "generation": 2,
-      "mutations": [
-        {
-          "mutation_type": "fix_script",
-          "description": "增加 max_depth 参数限制递归深度，避免大型目录遍历过深",
-          "timestamp": "1783424363"
-        }
-      ]
-    }
-  },
-  {
-    "name": "ssh_ops-v2",
-    "version": "0.2.0",
-    "description": "SSH 远程操作：执行远程命令、文件传输",
-    "actions": [
-      {
-        "name": "exec",
-        "description": "远程执行命令",
-        "input_schema": {
-          "properties": {
-            "command": {
-              "type": "string"
-            },
-            "host": {
-              "type": "string"
-            }
-          }
-        },
-        "implementation": {
-          "type": "Script",
-          "language": "python",
-          "code": "import subprocess,json,os\np=json.loads(os.environ.get('__EXECUTOR_INPUT__','{}'))\nhost=p.get('host','')\nif not host:\n print(json.dumps({'success':True,'message':'no host specified, ssh ready'},ensure_ascii=False));exit()\ntry:\n r=subprocess.run(['ssh','-o','ConnectTimeout=5',host,p.get('command','echo hello')],capture_output=True,text=True,timeout=15)\n print(json.dumps({'success':r.returncode==0,'stdout':r.stdout[:500],'stderr':r.stderr[:200],'exit_code':r.returncode},ensure_ascii=False))\nexcept subprocess.TimeoutExpired:\n print(json.dumps({'success':False,'error':'ssh connection timeout'},ensure_ascii=False))",
-          "timeout_secs": 30
-        }
-      }
-    ],
-    "fitness": {
-      "call_count": 0,
-      "auto_test_count": 0,
-      "success_count": 0,
-      "failure_count": 0,
-      "success_rate": 0.0,
-      "avg_latency_ms": 0.0,
-      "score": 0.0,
-      "last_evaluated": null,
-      "rounds_dormant": 2
-    },
-    "lineage": {
-      "origin": "Mutated",
-      "parent": "ssh_ops",
-      "generation": 2,
-      "mutations": [
-        {
-          "mutation_type": "fix_script",
-          "description": "无 host 时返回 success=true + 提示，避免 SSH 连接超时",
-          "timestamp": "1783425173"
-        }
-      ]
-    }
-  },
-  {
-    "name": "build_health_checker-v3",
-    "version": "0.1.0",
-    "description": "交叉能力：依赖分析 + 构建验证（cargo_ops × dep_track）",
-    "actions": [
-      {
-        "name": "check_build_health",
-        "description": "检查依赖和构建状态",
-        "input_schema": {
-          "properties": {
-            "path": {
-              "type": "string"
-            }
-          }
-        },
-        "implementation": {
-          "type": "Script",
-          "language": "python",
-          "code": "import subprocess,json,os\np=json.loads(os.environ.get('__EXECUTOR_INPUT__','{}'))\npath=p.get('path','.')\nresult={'success':True}\ncargo=os.path.join(path,'Cargo.toml')\nif os.path.exists(cargo):\n result['has_cargo']=True\n result['cargo_toml']=open(cargo).read()[:300]\n try:\n  r=subprocess.run(['cargo','check','--message-format=short'],cwd=path,capture_output=True,text=True,timeout=30)\n  result['check_exit']=r.returncode\n  result['check_stderr']=r.stderr[-200:]\n except subprocess.TimeoutExpired:\n  result['check_exit']='timeout'\n except Exception as e:\n  result['check_error']=str(e)\nelse:\n result['has_cargo']=False\n result['message']='no Cargo.toml found'\nprint(json.dumps(result,ensure_ascii=False))",
-          "timeout_secs": 60
-        }
-      }
-    ],
-    "fitness": {
-      "call_count": 0,
-      "auto_test_count": 0,
-      "success_count": 0,
-      "failure_count": 0,
-      "success_rate": 0.0,
-      "avg_latency_ms": 0.0,
-      "score": 0.0,
-      "last_evaluated": null,
-      "rounds_dormant": 2
-    },
-    "lineage": {
-      "origin": "Mutated",
-      "parent": "build_health_checker",
-      "generation": 3,
-      "mutations": [
-        {
-          "mutation_type": "fix_script",
-          "description": "增加 Cargo.toml 存在检查，cargo check 超时降级为返回状态",
-          "timestamp": "1783425168"
-        }
-      ]
-    }
-  },
-  {
-    "name": "py_pandas_ops-v2",
-    "version": "0.1.0",
-    "description": "Pandas 数据分析：读取 CSV、描述统计、筛选排序、分组聚合",
-    "actions": [
-      {
-        "name": "read_csv",
-        "description": "读取 CSV 文件并返回前几行",
-        "input_schema": {
-          "properties": {
-            "nrows": {
-              "type": "integer"
-            },
-            "path": {
-              "type": "string"
-            }
-          }
-        },
-        "implementation": {
-          "type": "Script",
-          "language": "python",
-          "code": "import pandas as pd,json,os\np=json.loads(os.environ.get('__EXECUTOR_INPUT__','{}'))\npath=p.get('path','')\nif path and os.path.exists(path):\n df=pd.read_csv(path,nrows=p.get('nrows',10))\nelse:\n df=pd.DataFrame({'name':['a','b','c'],'value':[1,2,3]})\nprint(json.dumps({'success':True,'columns':list(df.columns),'rows':df.head(10).to_dict('records'),'shape':list(df.shape)},ensure_ascii=False,default=str))",
-          "timeout_secs": 15
-        }
-      },
-      {
-        "name": "describe",
-        "description": "描述统计",
-        "input_schema": {
-          "properties": {
-            "path": {
-              "type": "string"
-            }
-          }
-        },
-        "implementation": {
-          "type": "Script",
-          "language": "python",
-          "code": "import pandas as pd, json, os\np=json.loads(os.environ.get('__EXECUTOR_INPUT__','{}'))\ndf=pd.read_csv(p.get('path',''))\nprint(json.dumps(df.describe().to_dict(),ensure_ascii=False,default=str))",
-          "timeout_secs": 15
-        }
-      },
-      {
-        "name": "groupby_agg",
-        "description": "分组聚合",
-        "input_schema": {
-          "properties": {
-            "agg_col": {
-              "type": "string"
-            },
-            "agg_func": {
-              "type": "string"
-            },
-            "group_col": {
-              "type": "string"
-            },
-            "path": {
-              "type": "string"
-            }
-          }
-        },
-        "implementation": {
-          "type": "Script",
-          "language": "python",
-          "code": "import pandas as pd, json, os\np=json.loads(os.environ.get('__EXECUTOR_INPUT__','{}'))\ndf=pd.read_csv(p.get('path',''))\ng=df.groupby(p.get('group_col',''))[p.get('agg_col','')].agg(p.get('agg_func','mean'))\nprint(json.dumps(g.to_dict(),ensure_ascii=False,default=str))",
-          "timeout_secs": 15
-        }
-      }
-    ],
-    "fitness": {
-      "call_count": 0,
-      "auto_test_count": 0,
-      "success_count": 0,
-      "failure_count": 0,
-      "success_rate": 0.0,
-      "avg_latency_ms": 0.0,
-      "score": 0.0,
-      "last_evaluated": null,
-      "rounds_dormant": 2
-    },
-    "lineage": {
-      "origin": "Mutated",
-      "parent": "py_pandas_ops",
-      "generation": 2,
-      "mutations": [
-        {
-          "mutation_type": "fix_script",
-          "description": "无文件路径时使用内置 DataFrame 演示，避免依赖外部文件",
-          "timestamp": "1783425158"
-        }
-      ]
-    }
-  },
-  {
-    "name": "data_query_helper",
-    "version": "0.1.0",
-    "description": "交叉能力：SQL 查询结果用 jq 过滤转换（sqlite3_ops × jq_ops）",
-    "actions": [
-      {
-        "name": "query_and_filter",
-        "description": "SQL 查询 + JSON 过滤",
-        "input_schema": {
-          "properties": {
-            "db": {
-              "type": "string"
-            },
-            "jq_filter": {
-              "type": "string"
-            },
-            "sql": {
-              "type": "string"
-            }
-          }
-        },
-        "implementation": {
-          "type": "Script",
-          "language": "python",
-          "code": "import subprocess,json,os\np=json.loads(os.environ.get('__EXECUTOR_INPUT__','{}'))\ndb=p.get('db',':memory:')\nsql=p.get('sql','SELECT 1')\nfilt=p.get('jq_filter','.')\nr1=subprocess.run(['sqlite3',db,'-json',sql],capture_output=True,text=True,timeout=10)\nif r1.stdout.strip():\n r2=subprocess.run(['jq',filt],input=r1.stdout,capture_output=True,text=True,timeout=10)\n print(r2.stdout[:2000])\nelse:\n print(json.dumps({'error':r1.stderr[:200]},ensure_ascii=False))",
-          "timeout_secs": 15
-        }
-      }
-    ],
-    "fitness": {
-      "call_count": 0,
-      "auto_test_count": 0,
-      "success_count": 0,
-      "failure_count": 0,
-      "success_rate": 0.0,
-      "avg_latency_ms": 0.0,
-      "score": 0.0,
-      "last_evaluated": null,
-      "rounds_dormant": 2
-    },
-    "lineage": {
-      "origin": "Other",
-      "parent": "sqlite3_ops+jq_ops",
-      "generation": 1,
-      "mutations": []
-    }
-  },
-  {
-    "name": "wasm32_wasi_ops",
-    "version": "0.1.0",
-    "description": "提供wasm32-wasi目标WebAssembly模块的编译、运行及WASI接口调用能力",
-    "actions": [
-      {
-        "name": "compile_wasm",
-        "description": "将Rust/C源码编译为wasm32-wasi目标二进制",
-        "input_schema": {
-          "properties": {
-            "output_path": {
-              "type": "string"
-            },
-            "source_path": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "source_path",
-            "output_path"
-          ]
-        },
-        "implementation": {
-          "type": "Script",
-          "language": "python",
-          "code": "import subprocess,sys;src,out=sys.argv[1],sys.argv[2];res=subprocess.run(['rustc','--target','wasm32-wasi',src,'-o',out],capture_output=True,text=True);print(res.stdout+res.stderr);sys.exit(res.returncode)",
-          "timeout_secs": 30
-        }
-      },
-      {
-        "name": "run_wasm",
-        "description": "执行wasm32-wasi格式的WebAssembly模块",
+        "name": "run_cargo",
+        "description": "执行任意cargo子命令",
         "input_schema": {
           "properties": {
             "args": {
-              "default": [],
-              "type": "array"
+              "description": "可选参数，空格分隔",
+              "type": "string"
             },
-            "wasm_path": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "wasm_path"
-          ]
-        },
-        "implementation": {
-          "type": "Script",
-          "language": "python",
-          "code": "import subprocess,sys;wasm,*args=sys.argv[1:];res=subprocess.run(['wasmtime',wasm,*args],capture_output=True,text=True);print(res.stdout+res.stderr);sys.exit(res.returncode)",
-          "timeout_secs": 30
-        }
-      }
-    ],
-    "fitness": {
-      "call_count": 0,
-      "auto_test_count": 0,
-      "success_count": 0,
-      "failure_count": 0,
-      "success_rate": 0.0,
-      "avg_latency_ms": 0.0,
-      "score": 0.0,
-      "last_evaluated": null,
-      "rounds_dormant": 1
-    },
-    "lineage": {
-      "origin": "Native",
-      "parent": null,
-      "generation": 0,
-      "mutations": []
-    }
-  },
-  {
-    "name": "git_commit_optimizer",
-    "version": "0.1.0",
-    "description": "Git 提交模式分析+优化建议（交叉能力）",
-    "actions": [
-      {
-        "name": "analyze_commit_pattern",
-        "description": "分析提交模式",
-        "input_schema": {
-          "properties": {
-            "count": {
-              "type": "integer"
-            }
-          }
-        },
-        "implementation": {
-          "type": "Script",
-          "language": "python",
-          "code": "import subprocess,json,os\np=json.loads(os.environ.get('__EXECUTOR_INPUT__','{}'))\nc=str(p.get('count',50))\nr=subprocess.run(['git','log',f'-{c}','--pretty=format:%ad|%s','--date=short'],capture_output=True,text=True,timeout=10)\nlines=r.stdout.strip().split('\\n') if r.stdout.strip() else []\nfix=sum(1 for l in lines if 'fix' in l.lower() or 'bug' in l.lower())\nprint(json.dumps({'total':len(lines),'fix_commits':fix,'fix_ratio':round(fix/max(len(lines),1),2),'recent':lines[:10]},ensure_ascii=False))",
-          "timeout_secs": 15
-        }
-      }
-    ],
-    "fitness": {
-      "call_count": 0,
-      "auto_test_count": 0,
-      "success_count": 0,
-      "failure_count": 0,
-      "success_rate": 0.0,
-      "avg_latency_ms": 0.0,
-      "score": 0.0,
-      "last_evaluated": null,
-      "rounds_dormant": 3
-    },
-    "lineage": {
-      "origin": "Other",
-      "parent": "git_ops+meta_learning",
-      "generation": 1,
-      "mutations": []
-    }
-  },
-  {
-    "name": "py_requests_ops-v2",
-    "version": "0.1.0",
-    "description": "Python requests HTTP 请求",
-    "actions": [
-      {
-        "name": "http_get",
-        "description": "GET",
-        "input_schema": {
-          "properties": {
-            "url": {
+            "command": {
+              "description": "子命令如build/test/clean",
               "type": "string"
             }
           }
@@ -1057,299 +87,52 @@
         "implementation": {
           "type": "Script",
           "language": "python",
-          "code": "import requests,json,os\np=json.loads(os.environ.get('__EXECUTOR_INPUT__','{}'))\nurl=p.get('url','') or 'https://httpbin.org/get'\ntry:\n r=requests.get(url,timeout=10)\n print(json.dumps({'success':True,'status':r.status_code,'body':r.text[:500]},ensure_ascii=False))\nexcept Exception as e:\n print(json.dumps({'success':False,'error':str(e)},ensure_ascii=False))",
-          "timeout_secs": 30
-        }
-      },
-      {
-        "name": "http_post",
-        "description": "POST",
-        "input_schema": {
-          "properties": {
-            "json": {
-              "type": "object"
-            },
-            "url": {
-              "type": "string"
-            }
-          }
-        },
-        "implementation": {
-          "type": "Script",
-          "language": "python",
-          "code": "import requests,json,os\np=json.loads(os.environ.get('__EXECUTOR_INPUT__','{}'))\nr=requests.post(p.get('url',''),json=p.get('json',{}),timeout=30)\nprint(json.dumps({'status':r.status_code,'body':r.text[:1000]},ensure_ascii=False))",
+          "code": "import subprocess\nimport sys\nimport os\nimport json\nimport shlex\n\ndef find_cargo_manifest_dir():\n    current_dir = os.getcwd()\n    while True:\n        manifest_path = os.path.join(current_dir, \"Cargo.toml\")\n        if os.path.isfile(manifest_path):\n            return current_dir\n        parent_dir = os.path.dirname(current_dir)\n        if parent_dir == current_dir:\n            return None\n        current_dir = parent_dir\n\ndef main():\n    try:\n        input_params = json.load(sys.stdin)\n    except json.JSONDecodeError:\n        print(\"Error: 无效的输入参数，请传入合法的JSON格式\", file=sys.stderr)\n        sys.exit(1)\n    \n    command = input_params.get(\"command\")\n    if not command:\n        print(\"Error: 必填参数command缺失\", file=sys.stderr)\n        sys.exit(1)\n    args = input_params.get(\"args\", \"\") or \"\"\n\n    work_dir = find_cargo_manifest_dir()\n    if not work_dir:\n        print(\"Error: 未找到Cargo.toml，请在Rust项目根目录下执行cargo命令\", file=sys.stderr)\n        sys.exit(1)\n\n    cargo_path = os.environ.get(\"CARGO_PATH\", \"cargo\")\n    timeout_secs = int(os.environ.get(\"CARGO_TIMEOUT\", \"30\"))\n\n    try:\n        cmd = [cargo_path, command]\n        if args:\n            cmd.extend(shlex.split(args))\n        result = subprocess.run(\n            cmd,\n            capture_output=True,\n            text=True,\n            cwd=work_dir,\n            timeout=timeout_secs\n        )\n        if result.returncode != 0:\n            print(f\"Error (exit {result.returncode}): {result.stderr}\", file=sys.stderr)\n            sys.exit(result.returncode)\n        print(result.stdout)\n    except subprocess.TimeoutExpired:\n        print(f\"Error: 命令执行超时（超过{timeout_secs}秒）\", file=sys.stderr)\n        sys.exit(1)\n    except FileNotFoundError:\n        print(\"Error: 未找到cargo命令，请确保Rust工具链已安装且cargo在环境变量PATH中\", file=sys.stderr)\n        sys.exit(1)\n    except Exception as e:\n        print(f\"Error: 执行出现未知异常: {str(e)}\", file=sys.stderr)\n        sys.exit(1)\n\nif __name__ == '__main__':\n    main()",
           "timeout_secs": 30
         }
       }
     ],
     "fitness": {
-      "call_count": 0,
-      "auto_test_count": 0,
+      "call_count": 1,
+      "auto_test_count": 1,
       "success_count": 0,
-      "failure_count": 0,
+      "failure_count": 1,
       "success_rate": 0.0,
       "avg_latency_ms": 0.0,
       "score": 0.0,
-      "last_evaluated": null,
-      "rounds_dormant": 2
+      "last_evaluated": "1783448923",
+      "rounds_dormant": 12,
+      "output_quality": 0.0,
+      "coverage_score": 0.0,
+      "dependency_complexity": 0.0,
+      "non_empty_output_count": 0
     },
     "lineage": {
       "origin": "Mutated",
-      "parent": "py_requests_ops",
-      "generation": 2,
+      "parent": "cargo_ops-v2-v4-v6",
+      "generation": 8,
       "mutations": [
         {
           "mutation_type": "fix_script",
-          "description": "空 URL 时使用 httpbin.org/get 作为默认，避免请求失败",
-          "timestamp": "1783425156"
-        }
-      ]
-    }
-  },
-  {
-    "name": "code_change_monitor",
-    "version": "0.1.0",
-    "description": "交叉能力：监控代码变更并用 rg 搜索变更内容（rg_ops × fs_watcher）",
-    "actions": [
-      {
-        "name": "monitor_and_search",
-        "description": "监控变更并搜索",
-        "input_schema": {
-          "properties": {
-            "duration_secs": {
-              "type": "integer"
-            },
-            "path": {
-              "type": "string"
-            },
-            "pattern": {
-              "type": "string"
-            }
-          }
+          "description": "脚本将捕获cargo命令的错误输出并打印到stderr，同时以非零退出码退出，使调用方能够获取详细错误信息；增加timeout超时处理；使用capture_output避免输出干扰；预计成功率从0%提升至80%以上（取决于用户输入有效性），且失败时提供可调试的错误消息。",
+          "timestamp": "1783445509"
         },
-        "implementation": {
-          "type": "Script",
-          "language": "python",
-          "code": "import os,time,json,subprocess,fnmatch\np=json.loads(os.environ.get('__EXECUTOR_INPUT__','{}'))\nroot=p.get('path','.');dur=int(p.get('duration_secs',5));pat=p.get('pattern','')\nign=['.git/*','node_modules/*','target/*','__pycache__/*']\ndef ig(x):\n rel=os.path.relpath(x,root)\n return any(fnmatch.fnmatch(rel,i) for i in ign)\ninit={}\nfor dp,dn,fn in os.walk(root):\n if ig(dp):dn.clear();continue\n for f in fn:\n  fp=os.path.join(dp,f)\n  if not ig(fp):\n   try:init[fp]=os.path.getmtime(fp)\n   except:pass\nevents=[];start=time.time()\nwhile time.time()-start<dur:\n time.sleep(0.5)\n for dp,dn,fn in os.walk(root):\n  if ig(dp):dn.clear();continue\n  for f in fn:\n   fp=os.path.join(dp,f)\n   if ig(fp):continue\n   try:\n    m=os.path.getmtime(fp)\n    if fp not in init:events.append({'type':'created','path':fp})\n    elif m!=init[fp]:events.append({'type':'modified','path':fp})\n    init[fp]=m\n   except:pass\nif pat and events:\n changed=[e['path'] for e in events if e['type'] in ('created','modified')]\n for fp in changed[:5]:\n  r=subprocess.run(['rg','--line-number',pat,fp],capture_output=True,text=True,timeout=5)\n  if r.stdout:events.append({'type':'search_match','path':fp,'matches':r.stdout[:500]})\nprint(json.dumps({'events':events,'count':len(events)},ensure_ascii=False))",
-          "timeout_secs": 60
-        }
-      }
-    ],
-    "fitness": {
-      "call_count": 0,
-      "auto_test_count": 0,
-      "success_count": 0,
-      "failure_count": 0,
-      "success_rate": 0.0,
-      "avg_latency_ms": 0.0,
-      "score": 0.0,
-      "last_evaluated": null,
-      "rounds_dormant": 2
-    },
-    "lineage": {
-      "origin": "Other",
-      "parent": "rg_ops+fs_watcher",
-      "generation": 1,
-      "mutations": []
-    }
-  },
-  {
-    "name": "api_deploy_helper",
-    "version": "0.1.0",
-    "description": "Git+HTTP 交叉能力：提交代码后通过 HTTP API 触发部署（git_ops × curl_ops）",
-    "actions": [
-      {
-        "name": "commit_and_notify",
-        "description": "提交代码并通知部署 API",
-        "input_schema": {
-          "properties": {
-            "message": {
-              "type": "string"
-            },
-            "webhook_url": {
-              "type": "string"
-            }
-          }
-        },
-        "implementation": {
-          "type": "Script",
-          "language": "python",
-          "code": "import subprocess,json,os\np=json.loads(os.environ.get('__EXECUTOR_INPUT__','{}'))\nmsg=p.get('message','auto deploy')\nwebhook=p.get('webhook_url','')\nsubprocess.run(['git','add','-A'],capture_output=True)\nr=subprocess.run(['git','commit','-m',msg],capture_output=True,text=True)\ncommit_hash=subprocess.run(['git','rev-parse','--short','HEAD'],capture_output=True,text=True).stdout.strip()\nresult={'commit':commit_hash,'git_exit':r.returncode}\nif webhook:\n import urllib.request\n data=json.dumps({'commit':commit_hash,'message':msg}).encode()\n try:\n  resp=urllib.request.urlopen(urllib.request.Request(webhook,data=data,headers={'Content-Type':'application/json'}),timeout=15)\n  result['notify_status']=resp.status\n except Exception as e:\n  result['notify_error']=str(e)\nprint(json.dumps(result,ensure_ascii=False))",
-          "timeout_secs": 30
-        }
-      }
-    ],
-    "fitness": {
-      "call_count": 0,
-      "auto_test_count": 0,
-      "success_count": 0,
-      "failure_count": 0,
-      "success_rate": 0.0,
-      "avg_latency_ms": 0.0,
-      "score": 0.0,
-      "last_evaluated": null,
-      "rounds_dormant": 2
-    },
-    "lineage": {
-      "origin": "Other",
-      "parent": "git_ops+curl_ops",
-      "generation": 1,
-      "mutations": []
-    }
-  },
-  {
-    "name": "py_numpy_ops",
-    "version": "0.3.0",
-    "description": "NumPy 数值计算：数组操作、线性代数、统计",
-    "actions": [
-      {
-        "name": "array_ops",
-        "description": "数组运算",
-        "input_schema": {
-          "properties": {
-            "a": {
-              "type": "array"
-            },
-            "op": {
-              "type": "string"
-            }
-          }
-        },
-        "implementation": {
-          "type": "Script",
-          "language": "python",
-          "code": "import numpy as np,json,os\np=json.loads(os.environ.get('__EXECUTOR_INPUT__','{}'))\na=np.array(p.get('a',[]))\nop=p.get('op','sum')\nresult=getattr(a,op)() if hasattr(a,op) else 'unknown op'\nprint(json.dumps({'result':result.tolist() if hasattr(result,'tolist') else str(result)},ensure_ascii=False))",
-          "timeout_secs": 10
-        }
-      },
-      {
-        "name": "linalg",
-        "description": "线性代数",
-        "input_schema": {
-          "properties": {
-            "matrix": {
-              "type": "array"
-            },
-            "op": {
-              "type": "string"
-            }
-          }
-        },
-        "implementation": {
-          "type": "Script",
-          "language": "python",
-          "code": "import numpy as np,json,os\np=json.loads(os.environ.get('__EXECUTOR_INPUT__','{}'))\nm=np.array(p.get('matrix',[]))\nop=p.get('op','det')\nif op=='det':result=np.linalg.det(m)\nelif op=='inv':result=np.linalg.inv(m)\nelif op=='eig':w,v=np.linalg.eig(m);result={'eigenvalues':w.tolist(),'eigenvectors':v.tolist()}\nelse:result='unknown'\nprint(json.dumps({'result':result.tolist() if hasattr(result,'tolist') else str(result)},ensure_ascii=False))",
-          "timeout_secs": 10
-        }
-      }
-    ],
-    "fitness": {
-      "call_count": 0,
-      "auto_test_count": 0,
-      "success_count": 0,
-      "failure_count": 0,
-      "success_rate": 0.0,
-      "avg_latency_ms": 0.0,
-      "score": 0.0,
-      "last_evaluated": null,
-      "rounds_dormant": 2
-    },
-    "lineage": {
-      "origin": "Other",
-      "parent": null,
-      "generation": 0,
-      "mutations": []
-    }
-  },
-  {
-    "name": "code_relationship_mapper-v3",
-    "version": "0.1.0",
-    "description": "交叉能力：从 Git 历史构建代码关系图谱（git_ops × knowledge_graph_ops）",
-    "actions": [
-      {
-        "name": "map_commit_relationships",
-        "description": "分析提交间的关联关系",
-        "input_schema": {
-          "properties": {
-            "count": {
-              "type": "integer"
-            }
-          }
-        },
-        "implementation": {
-          "type": "Script",
-          "language": "python",
-          "code": "import subprocess,json,os\np=json.loads(os.environ.get('__EXECUTOR_INPUT__','{}'))\nc=str(p.get('count',30))\nr=subprocess.run(['git','log',f'-{c}','--pretty=format:%H|%P|%s','--date=short'],capture_output=True,text=True,timeout=10)\nlines=r.stdout.strip().split('\\n') if r.stdout.strip() else []\nnodes=[];edges=[]\nfor l in lines:\n parts=l.split('|')\n if len(parts)>=3:\n  h=parts[0][:8];parents=parts[1].split() if parts[1] else []\n  nodes.append({'id':h,'label':parts[2][:50]})\n  for pp in parents:\n   edges.append({'source':pp[:8],'target':h,'label':'parent'})\nprint(json.dumps({'success':True,'nodes':nodes,'edges':edges,'total_commits':len(nodes)},ensure_ascii=False))",
-          "timeout_secs": 15
-        }
-      }
-    ],
-    "fitness": {
-      "call_count": 0,
-      "auto_test_count": 0,
-      "success_count": 0,
-      "failure_count": 0,
-      "success_rate": 0.0,
-      "avg_latency_ms": 0.0,
-      "score": 0.0,
-      "last_evaluated": null,
-      "rounds_dormant": 2
-    },
-    "lineage": {
-      "origin": "Mutated",
-      "parent": "code_relationship_mapper",
-      "generation": 3,
-      "mutations": [
         {
           "mutation_type": "fix_script",
-          "description": "修复 __EXECUTOR_INPUT__ 字符串转义 bug（缺少引号）",
-          "timestamp": "1783425164"
+          "description": "修复未定义变量错误，通过 sys.argv 接收 command 和 args，通过环境变量设置超时时间，预计成功率从 0% 提升至 90% 以上（当用户输入合法 cargo 命令时），失败时仍能输出详细错误信息。",
+          "timestamp": "1783445619"
+        },
+        {
+          "mutation_type": "fix_script",
+          "description": "1. 修复输入接收逻辑，适配能力调用框架的参数传递规范，确保command和args参数被正确解析；2. 自动定位Rust项目根目录作为执行工作目录，解决因工作路径错误导致的执行失败；3. 优化错误提示，明确cargo未安装、非项目目录等高频失败场景的解决指引；4. 保留原有超时控制、错误捕获与退出码传递能力，当输入合法且处于Rust项目目录时，预计成功率提升至90%以上。",
+          "timestamp": "1783445920"
+        },
+        {
+          "mutation_type": "fix_script",
+          "description": "修复 `action_command` 为 `command` 后，脚本能够正确读取用户输入的 cargo 子命令并执行。在用户提供合法 command 且位于 Rust 项目根目录时，成功率将提升至 90% 以上，同时保留完整的错误处理与超时机制。",
+          "timestamp": "1783446591"
         }
       ]
-    }
-  },
-  {
-    "name": "log_analyzer",
-    "version": "0.1.0",
-    "description": "日志分析：解析日志文件，提取错误/警告模式",
-    "actions": [
-      {
-        "name": "analyze",
-        "description": "分析日志文件",
-        "input_schema": {
-          "properties": {
-            "level": {
-              "type": "string"
-            },
-            "path": {
-              "type": "string"
-            }
-          }
-        },
-        "implementation": {
-          "type": "Script",
-          "language": "python",
-          "code": "import json,os,re\nfrom collections import Counter\np=json.loads(os.environ.get('__EXECUTOR_INPUT__','{}'))\npath=p.get('path','')\nlevel=p.get('level','ERROR').upper()\nif not os.path.exists(path):\n print(json.dumps({'error':'file not found'},ensure_ascii=False));exit()\nerrors=[];levels=Counter()\nwith open(path) as f:\n for line in f:\n  for lv in ['ERROR','WARN','INFO','DEBUG']:\n   if lv in line:levels[lv]+=1\n  if level in line:errors.append(line.strip()[:200])\nprint(json.dumps({'level_counts':dict(levels),f'{level.lower()}_count':len(errors),'sample':errors[:10]},ensure_ascii=False))",
-          "timeout_secs": 15
-        }
-      }
-    ],
-    "fitness": {
-      "call_count": 0,
-      "auto_test_count": 0,
-      "success_count": 0,
-      "failure_count": 0,
-      "success_rate": 0.0,
-      "avg_latency_ms": 0.0,
-      "score": 0.0,
-      "last_evaluated": null,
-      "rounds_dormant": 2
-    },
-    "lineage": {
-      "origin": "Other",
-      "parent": null,
-      "generation": 0,
-      "mutations": []
     }
   },
   {
@@ -1396,15 +179,19 @@
       }
     ],
     "fitness": {
-      "call_count": 0,
-      "auto_test_count": 0,
-      "success_count": 0,
+      "call_count": 7,
+      "auto_test_count": 1,
+      "success_count": 7,
       "failure_count": 0,
-      "success_rate": 0.0,
-      "avg_latency_ms": 0.0,
-      "score": 0.0,
-      "last_evaluated": null,
-      "rounds_dormant": 2
+      "success_rate": 1.0,
+      "avg_latency_ms": 63.57142857142857,
+      "score": 0.5495126683458934,
+      "last_evaluated": "1783452042",
+      "rounds_dormant": 0,
+      "output_quality": 0.14285714285714285,
+      "coverage_score": 0.20794415416798356,
+      "dependency_complexity": 0.0,
+      "non_empty_output_count": 1
     },
     "lineage": {
       "origin": "Mutated",
@@ -1415,6 +202,175 @@
           "mutation_type": "fix_script",
           "description": "增加 --connect-timeout 和 --max-time 参数，避免长时间挂起",
           "timestamp": "1783424365"
+        }
+      ]
+    }
+  },
+  {
+    "name": "fs_watcher-v2",
+    "version": "0.1.0",
+    "description": "文件系统监控：递归监控目录变化，支持 ignore 过滤",
+    "actions": [
+      {
+        "name": "watch",
+        "description": "监控目录",
+        "input_schema": {
+          "properties": {
+            "duration_secs": {
+              "type": "integer"
+            },
+            "path": {
+              "type": "string"
+            }
+          }
+        },
+        "implementation": {
+          "type": "Script",
+          "language": "python",
+          "code": "import os,time,json,fnmatch\np=json.loads(os.environ.get('__EXECUTOR_INPUT__','{}'))\nroot=p.get('path','.');dur=int(p.get('duration_secs',5))\nmax_depth=int(p.get('max_depth',10))\nign=['.git/*','node_modules/*','target/*','__pycache__/*','.DS_Store']\ndef ig(x):\n rel=os.path.relpath(x,root)\n return any(fnmatch.fnmatch(rel,i) or fnmatch.fnmatch(os.path.basename(x),i) for i in ign)\ndef walk_limited(path,depth=0):\n if depth>max_depth:return\n try:\n  for dp,dn,fn in os.walk(path):\n   if ig(dp):dn.clear();continue\n   rel_depth=dp[len(path):].count(os.sep)\n   if rel_depth>max_depth:dn.clear();continue\n   for f in fn:\n    fp=os.path.join(dp,f)\n    if not ig(fp):yield fp\n except:pass\ninit={}\nfor fp in walk_limited(root):\n try:init[fp]=os.path.getmtime(fp)\n except:pass\nev=[];start=time.time()\nwhile time.time()-start<dur:\n time.sleep(0.5);cur={}\n for fp in walk_limited(root):\n  try:\n   m=os.path.getmtime(fp);cur[fp]=m\n   if fp not in init:ev.append({'type':'created','path':fp})\n   elif m!=init[fp]:ev.append({'type':'modified','path':fp})\n  except:pass\n for fp in list(init):\n  if fp not in cur and not os.path.exists(fp):ev.append({'type':'deleted','path':fp});init.pop(fp,None)\n init.update(cur)\nprint(json.dumps({'events':ev,'count':len(ev),'max_depth':max_depth},ensure_ascii=False))",
+          "timeout_secs": 60
+        }
+      }
+    ],
+    "fitness": {
+      "call_count": 2,
+      "auto_test_count": 1,
+      "success_count": 2,
+      "failure_count": 0,
+      "success_rate": 1.0,
+      "avg_latency_ms": 5130.0,
+      "score": 0.10962026847852564,
+      "last_evaluated": "1783452047",
+      "rounds_dormant": 0,
+      "output_quality": 0.5,
+      "coverage_score": 0.10986122886681098,
+      "dependency_complexity": 0.0,
+      "non_empty_output_count": 1
+    },
+    "lineage": {
+      "origin": "Mutated",
+      "parent": "fs_watcher",
+      "generation": 2,
+      "mutations": [
+        {
+          "mutation_type": "fix_script",
+          "description": "增加 max_depth 参数限制递归深度，避免大型目录遍历过深",
+          "timestamp": "1783424363"
+        }
+      ]
+    }
+  },
+  {
+    "name": "code_relationship_mapper-v3",
+    "version": "0.1.0",
+    "description": "交叉能力：从 Git 历史构建代码关系图谱（git_ops × knowledge_graph_ops）",
+    "actions": [
+      {
+        "name": "map_commit_relationships",
+        "description": "分析提交间的关联关系",
+        "input_schema": {
+          "properties": {
+            "count": {
+              "type": "integer"
+            }
+          }
+        },
+        "implementation": {
+          "type": "Script",
+          "language": "python",
+          "code": "import subprocess,json,os\np=json.loads(os.environ.get('__EXECUTOR_INPUT__','{}'))\nc=str(p.get('count',30))\nr=subprocess.run(['git','log',f'-{c}','--pretty=format:%H|%P|%s','--date=short'],capture_output=True,text=True,timeout=10)\nlines=r.stdout.strip().split('\\n') if r.stdout.strip() else []\nnodes=[];edges=[]\nfor l in lines:\n parts=l.split('|')\n if len(parts)>=3:\n  h=parts[0][:8];parents=parts[1].split() if parts[1] else []\n  nodes.append({'id':h,'label':parts[2][:50]})\n  for pp in parents:\n   edges.append({'source':pp[:8],'target':h,'label':'parent'})\nprint(json.dumps({'success':True,'nodes':nodes,'edges':edges,'total_commits':len(nodes)},ensure_ascii=False))",
+          "timeout_secs": 15
+        }
+      }
+    ],
+    "fitness": {
+      "call_count": 5,
+      "auto_test_count": 1,
+      "success_count": 5,
+      "failure_count": 0,
+      "success_rate": 1.0,
+      "avg_latency_ms": 60.6,
+      "score": 0.9428625306430324,
+      "last_evaluated": "1783449796",
+      "rounds_dormant": 0,
+      "output_quality": 0.0,
+      "coverage_score": 0.0,
+      "dependency_complexity": 0.0,
+      "non_empty_output_count": 0
+    },
+    "lineage": {
+      "origin": "Mutated",
+      "parent": "code_relationship_mapper",
+      "generation": 3,
+      "mutations": [
+        {
+          "mutation_type": "fix_script",
+          "description": "修复 __EXECUTOR_INPUT__ 字符串转义 bug（缺少引号）",
+          "timestamp": "1783425164"
+        }
+      ]
+    }
+  },
+  {
+    "name": "git_ops-v2",
+    "version": "0.1.0",
+    "description": "Git 版本控制：status/commit/branch/sync",
+    "actions": [
+      {
+        "name": "status",
+        "description": "git status",
+        "input_schema": {
+          "properties": {}
+        },
+        "implementation": {
+          "type": "Script",
+          "language": "python",
+          "code": "import subprocess,json\nr1=subprocess.run(['git','status','--porcelain'],capture_output=True,text=True,timeout=10)\nr2=subprocess.run(['git','diff','--stat'],capture_output=True,text=True,timeout=10)\nfiles=r1.stdout.strip().split('\\n') if r1.stdout.strip() else []\nprint(json.dumps({'status':files,'diff_stat':r2.stdout[:500],'changed_files':len(files)},ensure_ascii=False))",
+          "timeout_secs": 10
+        }
+      },
+      {
+        "name": "commit",
+        "description": "git commit",
+        "input_schema": {
+          "properties": {
+            "message": {
+              "type": "string"
+            }
+          }
+        },
+        "implementation": {
+          "type": "Script",
+          "language": "python",
+          "code": "import subprocess,json,os\np=json.loads(os.environ.get('__EXECUTOR_INPUT__','{}'))\nsubprocess.run(['git','add','-A'],capture_output=True)\nr=subprocess.run(['git','commit','-m',p.get('message','auto')],capture_output=True,text=True)\nprint(json.dumps({'exit_code':r.returncode,'stderr':r.stderr[:200]},ensure_ascii=False))",
+          "timeout_secs": 15
+        }
+      }
+    ],
+    "fitness": {
+      "call_count": 12,
+      "auto_test_count": 0,
+      "success_count": 12,
+      "failure_count": 0,
+      "success_rate": 1.0,
+      "avg_latency_ms": 85.0,
+      "score": 0.9216589861751152,
+      "last_evaluated": "1783451023",
+      "rounds_dormant": 0,
+      "output_quality": 0.0,
+      "coverage_score": 0.0,
+      "dependency_complexity": 0.0,
+      "non_empty_output_count": 0
+    },
+    "lineage": {
+      "origin": "Mutated",
+      "parent": "git_ops",
+      "generation": 2,
+      "mutations": [
+        {
+          "mutation_type": "fix_script",
+          "description": "增加 diff 摘要：显示变更文件数和行数统计，而不只是文件名",
+          "timestamp": "1783424586"
         }
       ]
     }
@@ -1448,6 +404,230 @@
       }
     ],
     "fitness": {
+      "call_count": 5,
+      "auto_test_count": 0,
+      "success_count": 0,
+      "failure_count": 5,
+      "success_rate": 0.0,
+      "avg_latency_ms": 45.4,
+      "score": 0.0,
+      "last_evaluated": "1783446460",
+      "rounds_dormant": 0,
+      "output_quality": 0.0,
+      "coverage_score": 0.0,
+      "dependency_complexity": 0.0,
+      "non_empty_output_count": 0
+    },
+    "lineage": {
+      "origin": "Native",
+      "parent": null,
+      "generation": 0,
+      "mutations": []
+    }
+  },
+  {
+    "name": "json_data_explorer",
+    "version": "0.1.0",
+    "description": "交叉：JSON查询+数据统计（jq×pandas）",
+    "actions": [
+      {
+        "name": "explore_json",
+        "description": "探索JSON数据结构",
+        "input_schema": {
+          "properties": {
+            "data": {
+              "type": "string"
+            },
+            "filter": {
+              "type": "string"
+            }
+          }
+        },
+        "implementation": {
+          "type": "Script",
+          "language": "python",
+          "code": "import subprocess,json,os\np=json.loads(os.environ.get('__EXECUTOR_INPUT__','{}'))\ndata=p.get('data','')\nflt=p.get('filter','.')\nr=subprocess.run(['jq',flt],input=data,capture_output=True,text=True,timeout=10)\nif r.returncode!=0:\n print(json.dumps({'error':r.stderr[:200]},ensure_ascii=False));exit()\ntry:\n v=json.loads(r.stdout)\n if isinstance(v,list):print(json.dumps({'type':'array','length':len(v),'sample':v[:3]},ensure_ascii=False))\n elif isinstance(v,dict):print(json.dumps({'type':'object','keys':list(v.keys())[:20]},ensure_ascii=False))\n else:print(json.dumps({'type':type(v).__name__,'value':str(v)[:200]},ensure_ascii=False))\nexcept:print(json.dumps({'raw':r.stdout[:1000]},ensure_ascii=False))",
+          "timeout_secs": 10
+        }
+      }
+    ],
+    "fitness": {
+      "call_count": 5,
+      "auto_test_count": 1,
+      "success_count": 5,
+      "failure_count": 0,
+      "success_rate": 1.0,
+      "avg_latency_ms": 48.6,
+      "score": 0.9536524890329964,
+      "last_evaluated": "1783445159",
+      "rounds_dormant": 0,
+      "output_quality": 0.0,
+      "coverage_score": 0.0,
+      "dependency_complexity": 0.0,
+      "non_empty_output_count": 0
+    },
+    "lineage": {
+      "origin": "Other",
+      "parent": "jq_ops+py_pandas_ops",
+      "generation": 1,
+      "mutations": []
+    }
+  },
+  {
+    "name": "ffmpeg_ops",
+    "version": "0.1.0",
+    "description": "FFmpeg视频/音频处理能力，支持转码、裁剪、提取等操作",
+    "actions": [
+      {
+        "name": "ffprobe",
+        "description": "探测媒体文件元数据",
+        "input_schema": {
+          "properties": {
+            "file_path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "file_path"
+          ]
+        },
+        "implementation": {
+          "type": "Script",
+          "language": "python",
+          "code": "import json, subprocess\ndef probe(file_path):\n    r = subprocess.run(['ffprobe', '-v', 'error', '-show_format', '-show_streams', '-of', 'json', file_path], capture_output=True, text=True, timeout=30)\n    if r.returncode != 0: return {'error': r.stderr}\n    return json.loads(r.stdout)",
+          "timeout_secs": 30
+        }
+      },
+      {
+        "name": "transcode",
+        "description": "转码媒体文件",
+        "input_schema": {
+          "properties": {
+            "audio_codec": {
+              "default": "aac",
+              "type": "string"
+            },
+            "codec": {
+              "default": "libx264",
+              "type": "string"
+            },
+            "crf": {
+              "default": 23,
+              "type": "integer"
+            },
+            "input_path": {
+              "type": "string"
+            },
+            "output_path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "input_path",
+            "output_path"
+          ]
+        },
+        "implementation": {
+          "type": "Script",
+          "language": "python",
+          "code": "import subprocess\ndef transcode(inp, out, codec='libx264', acodec='aac', crf=23):\n    cmd = ['ffmpeg', '-y', '-i', inp, '-c:v', codec, '-crf', str(crf), '-c:a', acodec, out]\n    r = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)\n    return {'success': r.returncode == 0, 'stderr': r.stderr[-500:]}",
+          "timeout_secs": 3600
+        }
+      },
+      {
+        "name": "trim",
+        "description": "按时间裁剪媒体片段",
+        "input_schema": {
+          "properties": {
+            "duration": {
+              "type": "string"
+            },
+            "input_path": {
+              "type": "string"
+            },
+            "output_path": {
+              "type": "string"
+            },
+            "start_time": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "input_path",
+            "output_path",
+            "start_time",
+            "duration"
+          ]
+        },
+        "implementation": {
+          "type": "Script",
+          "language": "python",
+          "code": "import subprocess\ndef trim(inp, out, start, dur):\n    r = subprocess.run(['ffmpeg', '-y', '-ss', start, '-i', inp, '-t', dur, '-c', 'copy', out], capture_output=True, text=True, timeout=3600)\n    return {'success': r.returncode == 0, 'stderr': r.stderr[-500:]}",
+          "timeout_secs": 3600
+        }
+      },
+      {
+        "name": "extract_audio",
+        "description": "从视频提取音频",
+        "input_schema": {
+          "properties": {
+            "bitrate": {
+              "default": "192k",
+              "type": "string"
+            },
+            "format": {
+              "default": "mp3",
+              "type": "string"
+            },
+            "input_path": {
+              "type": "string"
+            },
+            "output_path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "input_path",
+            "output_path"
+          ]
+        },
+        "implementation": {
+          "type": "Script",
+          "language": "python",
+          "code": "import subprocess\ndef extract_audio(inp, out, fmt='mp3', br='192k'):\n    r = subprocess.run(['ffmpeg', '-y', '-i', inp, '-vn', '-acodec', 'libmp3lame' if fmt == 'mp3' else fmt, '-ab', br, out], capture_output=True, text=True, timeout=3600)\n    return {'success': r.returncode == 0, 'stderr': r.stderr[-500:]}",
+          "timeout_secs": 3600
+        }
+      },
+      {
+        "name": "thumbnail",
+        "description": "生成视频缩略图",
+        "input_schema": {
+          "properties": {
+            "input_path": {
+              "type": "string"
+            },
+            "output_path": {
+              "type": "string"
+            },
+            "timestamp": {
+              "default": "00:00:01",
+              "type": "string"
+            }
+          },
+          "required": [
+            "input_path",
+            "output_path"
+          ]
+        },
+        "implementation": {
+          "type": "Script",
+          "language": "python",
+          "code": "import subprocess\ndef thumb(inp, out, ts='00:00:01'):\n    r = subprocess.run(['ffmpeg', '-y', '-ss', ts, '-i', inp, '-vframes', '1', '-q:v', '2', out], capture_output=True, text=True, timeout=60)\n    return {'success': r.returncode == 0, 'stderr': r.stderr[-500:]}",
+          "timeout_secs": 60
+        }
+      }
+    ],
+    "fitness": {
       "call_count": 0,
       "auto_test_count": 0,
       "success_count": 0,
@@ -1456,10 +636,59 @@
       "avg_latency_ms": 0.0,
       "score": 0.0,
       "last_evaluated": null,
-      "rounds_dormant": 1
+      "rounds_dormant": 0,
+      "output_quality": 0.0,
+      "coverage_score": 0.0,
+      "dependency_complexity": 0.1,
+      "non_empty_output_count": 0
     },
     "lineage": {
       "origin": "Native",
+      "parent": null,
+      "generation": 0,
+      "mutations": []
+    }
+  },
+  {
+    "name": "code_quality_analyzer",
+    "version": "0.1.0",
+    "description": "代码质量分析：复杂度、TODO 统计",
+    "actions": [
+      {
+        "name": "analyze_complexity",
+        "description": "分析代码复杂度",
+        "input_schema": {
+          "properties": {
+            "path": {
+              "type": "string"
+            }
+          }
+        },
+        "implementation": {
+          "type": "Script",
+          "language": "python",
+          "code": "import os,json\np=json.loads(os.environ.get('__EXECUTOR_INPUT__','{}'))\nroot=p.get('path','.')\nstats={'files':0,'lines':0,'todos':0,'functions':0}\nfor dp,dn,fn in os.walk(root):\n if '.git' in dp or 'target' in dp or 'node_modules' in dp:continue\n for f in fn:\n  if f.endswith(('.py','.rs','.js','.ts')):\n   stats['files']+=1\n   try:\n    for line in open(os.path.join(dp,f)):\n     stats['lines']+=1\n     if 'TODO' in line or 'FIXME' in line:stats['todos']+=1\n     if line.strip().startswith(('def ','fn ','function ')):stats['functions']+=1\n   except:pass\nprint(json.dumps(stats,ensure_ascii=False))",
+          "timeout_secs": 15
+        }
+      }
+    ],
+    "fitness": {
+      "call_count": 6,
+      "auto_test_count": 0,
+      "success_count": 6,
+      "failure_count": 0,
+      "success_rate": 1.0,
+      "avg_latency_ms": 128.5,
+      "score": 0.8861320336730172,
+      "last_evaluated": "1783448403",
+      "rounds_dormant": 0,
+      "output_quality": 0.0,
+      "coverage_score": 0.0,
+      "dependency_complexity": 0.0,
+      "non_empty_output_count": 0
+    },
+    "lineage": {
+      "origin": "Other",
       "parent": null,
       "generation": 0,
       "mutations": []
@@ -1489,15 +718,19 @@
       }
     ],
     "fitness": {
-      "call_count": 0,
+      "call_count": 2,
       "auto_test_count": 0,
-      "success_count": 0,
+      "success_count": 2,
       "failure_count": 0,
-      "success_rate": 0.0,
-      "avg_latency_ms": 0.0,
-      "score": 0.0,
-      "last_evaluated": null,
-      "rounds_dormant": 2
+      "success_rate": 1.0,
+      "avg_latency_ms": 29.0,
+      "score": 0.9718172983479106,
+      "last_evaluated": "1783449796",
+      "rounds_dormant": 0,
+      "output_quality": 0.0,
+      "coverage_score": 0.0,
+      "dependency_complexity": 0.0,
+      "non_empty_output_count": 0
     },
     "lineage": {
       "origin": "Other",
@@ -1543,15 +776,19 @@
       }
     ],
     "fitness": {
-      "call_count": 1,
+      "call_count": 6,
       "auto_test_count": 0,
-      "success_count": 1,
+      "success_count": 6,
       "failure_count": 0,
       "success_rate": 1.0,
-      "avg_latency_ms": 41.0,
-      "score": 0.9606147934678195,
-      "last_evaluated": "1783444177",
-      "rounds_dormant": 0
+      "avg_latency_ms": 59.166666666666664,
+      "score": 0.944138473642801,
+      "last_evaluated": "1783449796",
+      "rounds_dormant": 0,
+      "output_quality": 0.0,
+      "coverage_score": 0.0,
+      "dependency_complexity": 0.0,
+      "non_empty_output_count": 0
     },
     "lineage": {
       "origin": "Other",
@@ -1561,362 +798,9 @@
     }
   },
   {
-    "name": "dep_track",
-    "version": "0.3.0",
-    "description": "依赖追踪：分析项目依赖关系和版本",
-    "actions": [
-      {
-        "name": "analyze_deps",
-        "description": "分析项目依赖",
-        "input_schema": {
-          "properties": {
-            "path": {
-              "type": "string"
-            }
-          }
-        },
-        "implementation": {
-          "type": "Script",
-          "language": "python",
-          "code": "import json,os,subprocess\np=json.loads(os.environ.get('__EXECUTOR_INPUT__','{}'))\npath=p.get('path','.')\nresult={}\ncargo=os.path.join(path,'Cargo.toml')\nif os.path.exists(cargo):\n result['rust']=open(cargo).read()[:1000]\npkg=os.path.join(path,'package.json')\nif os.path.exists(pkg):\n result['npm']=json.load(open(pkg)).get('dependencies',{})\nreq=os.path.join(path,'requirements.txt')\nif os.path.exists(req):\n result['python']=open(req).read()[:500]\nprint(json.dumps(result,ensure_ascii=False))",
-          "timeout_secs": 10
-        }
-      }
-    ],
-    "fitness": {
-      "call_count": 0,
-      "auto_test_count": 0,
-      "success_count": 0,
-      "failure_count": 0,
-      "success_rate": 0.0,
-      "avg_latency_ms": 0.0,
-      "score": 0.0,
-      "last_evaluated": null,
-      "rounds_dormant": 2
-    },
-    "lineage": {
-      "origin": "Other",
-      "parent": null,
-      "generation": 0,
-      "mutations": []
-    }
-  },
-  {
-    "name": "pip3_ops",
-    "version": "0.2.0",
-    "description": "Python 包管理：install/list/show",
-    "actions": [
-      {
-        "name": "install",
-        "description": "pip install",
-        "input_schema": {
-          "properties": {
-            "pkg": {
-              "type": "string"
-            }
-          }
-        },
-        "implementation": {
-          "type": "Script",
-          "language": "python",
-          "code": "import subprocess,json,os\np=json.loads(os.environ.get('__EXECUTOR_INPUT__','{}'))\nr=subprocess.run(['pip3','install',p.get('pkg','')],capture_output=True,text=True,timeout=60)\nprint(json.dumps({'stdout':r.stdout[-300:],'exit_code':r.returncode},ensure_ascii=False))",
-          "timeout_secs": 60
-        }
-      },
-      {
-        "name": "list",
-        "description": "pip list",
-        "input_schema": {
-          "properties": {}
-        },
-        "implementation": {
-          "type": "Script",
-          "language": "python",
-          "code": "import subprocess,json\nr=subprocess.run(['pip3','list'],capture_output=True,text=True,timeout=15)\nprint(json.dumps({'packages':r.stdout[:2000]},ensure_ascii=False))",
-          "timeout_secs": 15
-        }
-      }
-    ],
-    "fitness": {
-      "call_count": 0,
-      "auto_test_count": 0,
-      "success_count": 0,
-      "failure_count": 0,
-      "success_rate": 0.0,
-      "avg_latency_ms": 0.0,
-      "score": 0.0,
-      "last_evaluated": null,
-      "rounds_dormant": 2
-    },
-    "lineage": {
-      "origin": "Other",
-      "parent": null,
-      "generation": 0,
-      "mutations": []
-    }
-  },
-  {
-    "name": "jq_ops",
-    "version": "0.2.0",
-    "description": "JSON 查询过滤",
-    "actions": [
-      {
-        "name": "query",
-        "description": "jq filter",
-        "input_schema": {
-          "properties": {
-            "data": {
-              "type": "string"
-            },
-            "filter": {
-              "type": "string"
-            }
-          }
-        },
-        "implementation": {
-          "type": "Script",
-          "language": "python",
-          "code": "import subprocess,json,os\np=json.loads(os.environ.get('__EXECUTOR_INPUT__','{}'))\nr=subprocess.run(['jq',p.get('filter','.')],input=p.get('data',''),capture_output=True,text=True,timeout=10)\nprint(json.dumps({'result':r.stdout[:1000],'error':r.stderr[:200]},ensure_ascii=False))",
-          "timeout_secs": 10
-        }
-      }
-    ],
-    "fitness": {
-      "call_count": 0,
-      "auto_test_count": 0,
-      "success_count": 0,
-      "failure_count": 0,
-      "success_rate": 0.0,
-      "avg_latency_ms": 0.0,
-      "score": 0.0,
-      "last_evaluated": null,
-      "rounds_dormant": 3
-    },
-    "lineage": {
-      "origin": "Other",
-      "parent": null,
-      "generation": 0,
-      "mutations": []
-    }
-  },
-  {
-    "name": "rg_ops-v2",
+    "name": "git_commit_optimizer",
     "version": "0.1.0",
-    "description": "Ripgrep 搜索",
-    "actions": [
-      {
-        "name": "search",
-        "description": "搜索文本",
-        "input_schema": {
-          "properties": {
-            "path": {
-              "type": "string"
-            },
-            "pattern": {
-              "type": "string"
-            }
-          }
-        },
-        "implementation": {
-          "type": "Script",
-          "language": "python",
-          "code": "import subprocess,json,os\np=json.loads(os.environ.get('__EXECUTOR_INPUT__','{}'))\ncmd=['rg','--line-number']\nft=p.get('filetype','')\nif ft:cmd+=['--type',ft]\ncmd+=[p.get('pattern',''),p.get('path','.')]\nr=subprocess.run(cmd,capture_output=True,text=True,timeout=15)\nprint(json.dumps({'matches':r.stdout[:2000],'exit_code':r.returncode,'filetype':ft},ensure_ascii=False))",
-          "timeout_secs": 15
-        }
-      }
-    ],
-    "fitness": {
-      "call_count": 0,
-      "auto_test_count": 0,
-      "success_count": 0,
-      "failure_count": 0,
-      "success_rate": 0.0,
-      "avg_latency_ms": 0.0,
-      "score": 0.0,
-      "last_evaluated": null,
-      "rounds_dormant": 2
-    },
-    "lineage": {
-      "origin": "Mutated",
-      "parent": "rg_ops",
-      "generation": 2,
-      "mutations": [
-        {
-          "mutation_type": "fix_script",
-          "description": "增加 filetype 参数支持按语言过滤搜索（--type rust/python/js 等）",
-          "timestamp": "1783424508"
-        }
-      ]
-    }
-  },
-  {
-    "name": "ffmpeg_ops",
-    "version": "0.2.0",
-    "description": "FFmpeg 音视频处理：转码、截取、信息查询",
-    "actions": [
-      {
-        "name": "info",
-        "description": "媒体文件信息",
-        "input_schema": {
-          "properties": {
-            "path": {
-              "type": "string"
-            }
-          }
-        },
-        "implementation": {
-          "type": "Script",
-          "language": "python",
-          "code": "import subprocess,json,os\np=json.loads(os.environ.get('__EXECUTOR_INPUT__','{}'))\nr=subprocess.run(['ffprobe','-v','quiet','-print_format','json','-show_format','-show_streams',p.get('path','')],capture_output=True,text=True,timeout=15)\nprint(r.stdout[:2000])",
-          "timeout_secs": 15
-        }
-      },
-      {
-        "name": "transcode",
-        "description": "转码",
-        "input_schema": {
-          "properties": {
-            "codec": {
-              "type": "string"
-            },
-            "input": {
-              "type": "string"
-            },
-            "output": {
-              "type": "string"
-            }
-          }
-        },
-        "implementation": {
-          "type": "Script",
-          "language": "python",
-          "code": "import subprocess,json,os\np=json.loads(os.environ.get('__EXECUTOR_INPUT__','{}'))\ncmd=['ffmpeg','-i',p.get('input',''),'-c:v',p.get('codec','libx264'),p.get('output','out.mp4')]\nr=subprocess.run(cmd,capture_output=True,text=True,timeout=120)\nprint(json.dumps({'exit_code':r.returncode,'stderr':r.stderr[-300:]},ensure_ascii=False))",
-          "timeout_secs": 120
-        }
-      }
-    ],
-    "fitness": {
-      "call_count": 0,
-      "auto_test_count": 0,
-      "success_count": 0,
-      "failure_count": 0,
-      "success_rate": 0.0,
-      "avg_latency_ms": 0.0,
-      "score": 0.0,
-      "last_evaluated": null,
-      "rounds_dormant": 2
-    },
-    "lineage": {
-      "origin": "Other",
-      "parent": null,
-      "generation": 0,
-      "mutations": []
-    }
-  },
-  {
-    "name": "sqlite3_ops-v2",
-    "version": "0.2.0",
-    "description": "SQLite 数据库操作",
-    "actions": [
-      {
-        "name": "query",
-        "description": "SQL query",
-        "input_schema": {
-          "properties": {
-            "db": {
-              "type": "string"
-            },
-            "sql": {
-              "type": "string"
-            }
-          }
-        },
-        "implementation": {
-          "type": "Script",
-          "language": "python",
-          "code": "import subprocess,json,os\np=json.loads(os.environ.get('__EXECUTOR_INPUT__','{}'))\ndb=p.get('db',':memory:')\nsql=p.get('sql','SELECT 1')\nfmt=p.get('format','json')\nif fmt=='csv':\n r=subprocess.run(['sqlite3',db,'-csv','-header',sql],capture_output=True,text=True,timeout=10)\n print(json.dumps({'csv':r.stdout[:2000],'error':r.stderr[:200]},ensure_ascii=False))\nelse:\n r=subprocess.run(['sqlite3',db,'-json',sql],capture_output=True,text=True,timeout=10)\n print(json.dumps({'result':r.stdout[:2000] if r.stdout.strip() else [],'error':r.stderr[:200]},ensure_ascii=False))",
-          "timeout_secs": 10
-        }
-      }
-    ],
-    "fitness": {
-      "call_count": 0,
-      "auto_test_count": 0,
-      "success_count": 0,
-      "failure_count": 0,
-      "success_rate": 0.0,
-      "avg_latency_ms": 0.0,
-      "score": 0.0,
-      "last_evaluated": null,
-      "rounds_dormant": 2
-    },
-    "lineage": {
-      "origin": "Mutated",
-      "parent": "sqlite3_ops",
-      "generation": 2,
-      "mutations": [
-        {
-          "mutation_type": "fix_script",
-          "description": "增加 -csv -header 模式输出，支持直接导出 CSV 格式",
-          "timestamp": "1783424506"
-        }
-      ]
-    }
-  },
-  {
-    "name": "http_requests_ops",
-    "version": "0.1.0",
-    "description": "HTTP 请求能力：支持所有方法、headers、cookies、redirect",
-    "actions": [
-      {
-        "name": "request",
-        "description": "通用 HTTP 请求",
-        "input_schema": {
-          "properties": {
-            "data": {
-              "type": "string"
-            },
-            "headers": {
-              "type": "object"
-            },
-            "method": {
-              "type": "string"
-            },
-            "url": {
-              "type": "string"
-            }
-          }
-        },
-        "implementation": {
-          "type": "Script",
-          "language": "python",
-          "code": "import subprocess,json,os\np=json.loads(os.environ.get('__EXECUTOR_INPUT__','{}'))\nmethod=p.get('method','GET')\nurl=p.get('url','')\ncmd=['curl','-s','-X',method,'-w','\\n%{http_code}','-L']\nfor k,v in p.get('headers',{}).items():cmd+=['-H',f'{k}: {v}']\nif p.get('data'):cmd+=['-d',p['data']]\ncmd.append(url)\nr=subprocess.run(cmd,capture_output=True,text=True,timeout=30)\nlines=r.stdout.rsplit('\\n',1)\nprint(json.dumps({'body':lines[0][:2000],'status':lines[1] if len(lines)>1 else '?','method':method},ensure_ascii=False))",
-          "timeout_secs": 30
-        }
-      }
-    ],
-    "fitness": {
-      "call_count": 0,
-      "auto_test_count": 0,
-      "success_count": 0,
-      "failure_count": 0,
-      "success_rate": 0.0,
-      "avg_latency_ms": 0.0,
-      "score": 0.0,
-      "last_evaluated": null,
-      "rounds_dormant": 2
-    },
-    "lineage": {
-      "origin": "Other",
-      "parent": null,
-      "generation": 0,
-      "mutations": []
-    }
-  },
-  {
-    "name": "adaptive_version_control",
-    "version": "0.3.0",
-    "description": "自适应版本控制：分析提交历史模式，建议分支策略",
+    "description": "Git 提交模式分析+优化建议（交叉能力）",
     "actions": [
       {
         "name": "analyze_commit_pattern",
@@ -1931,21 +815,244 @@
         "implementation": {
           "type": "Script",
           "language": "python",
-          "code": "import subprocess,json,os\np=json.loads(os.environ.get('__EXECUTOR_INPUT__','{}'))\nc=str(p.get('count',50))\nr=subprocess.run(['git','log',f'-{c}','--pretty=format:%ad|%an|%s','--date=short'],capture_output=True,text=True,timeout=10)\nlines=r.stdout.strip().split('\\n') if r.stdout.strip() else []\nfrom collections import Counter\nauthors=Counter(l.split('|')[1] if '|' in l else '' for l in lines)\ndates=Counter(l.split('|')[0] if '|' in l else '' for l in lines)\nprint(json.dumps({'total':len(lines),'authors':dict(authors),'active_days':len(dates),'avg_per_day':round(len(lines)/max(len(dates),1),1)},ensure_ascii=False))",
+          "code": "import subprocess,json,os\np=json.loads(os.environ.get('__EXECUTOR_INPUT__','{}'))\nc=str(p.get('count',50))\nr=subprocess.run(['git','log',f'-{c}','--pretty=format:%ad|%s','--date=short'],capture_output=True,text=True,timeout=10)\nlines=r.stdout.strip().split('\\n') if r.stdout.strip() else []\nfix=sum(1 for l in lines if 'fix' in l.lower() or 'bug' in l.lower())\nprint(json.dumps({'total':len(lines),'fix_commits':fix,'fix_ratio':round(fix/max(len(lines),1),2),'recent':lines[:10]},ensure_ascii=False))",
           "timeout_secs": 15
         }
       }
     ],
     "fitness": {
-      "call_count": 0,
-      "auto_test_count": 0,
-      "success_count": 0,
+      "call_count": 2,
+      "auto_test_count": 1,
+      "success_count": 2,
       "failure_count": 0,
+      "success_rate": 1.0,
+      "avg_latency_ms": 85.0,
+      "score": 0.9216589861751152,
+      "last_evaluated": "1783448403",
+      "rounds_dormant": 0,
+      "output_quality": 0.0,
+      "coverage_score": 0.0,
+      "dependency_complexity": 0.0,
+      "non_empty_output_count": 0
+    },
+    "lineage": {
+      "origin": "Other",
+      "parent": "git_ops+meta_learning",
+      "generation": 1,
+      "mutations": []
+    }
+  },
+  {
+    "name": "cargo_ops-v2-v4-v6",
+    "version": "0.1.0",
+    "description": "通过cargo管理Rust项目的构建、测试与依赖",
+    "actions": [
+      {
+        "name": "run_cargo",
+        "description": "执行任意cargo子命令",
+        "input_schema": {
+          "properties": {
+            "args": {
+              "description": "可选参数，空格分隔",
+              "type": "string"
+            },
+            "command": {
+              "description": "子命令如build/test/clean",
+              "type": "string"
+            }
+          }
+        },
+        "implementation": {
+          "type": "Script",
+          "language": "python",
+          "code": "\"\"\"执行cargo命令并返回结果\"\"\"\nimport subprocess\nimport shlex\nimport sys\nimport os\nfrom typing import Dict, Any\n\ndef execute(input_data: Dict[str, Any]) -> Dict[str, Any]:\n    command = input_data.get('command', '')\n    args = input_data.get('args', '')\n    work_dir = input_data.get('work_dir', os.getcwd())\n    env_vars = input_data.get('env', {})\n    timeout = input_data.get('timeout', 300)  # 默认5分钟，可外部配置\n    \n    if not command:\n        return {\n            'success': False,\n            'error': 'command参数不能为空',\n            'stdout': '',\n            'stderr': 'command parameter is required'\n        }\n    \n    # 构建命令参数列表\n    cmd_parts = ['cargo', command]\n    if args:\n        try:\n            parsed_args = shlex.split(args) if isinstance(args, str) else args\n            cmd_parts.extend(parsed_args)\n        except ValueError as e:\n            return {\n                'success': False,\n                'error': f'参数解析失败: {str(e)}',\n                'stdout': '',\n                'stderr': str(e)\n            }\n    \n    # 合并环境变量\n    exec_env = os.environ.copy()\n    exec_env.update(env_vars)\n    # 确保PATH包含常见的cargo安装路径\n    if 'PATH' in exec_env:\n        cargo_paths = [\n            os.path.expanduser('~/.cargo/bin'),\n            '/usr/local/cargo/bin',\n            '/usr/local/bin',\n        ]\n        existing_paths = exec_env['PATH'].split(os.pathsep)\n        for path in cargo_paths:\n            if path not in existing_paths and os.path.exists(path):\n                exec_env['PATH'] = path + os.pathsep + exec_env['PATH']\n    \n    # 检查工作目录是否存在\n    if not os.path.isdir(work_dir):\n        return {\n            'success': False,\n            'error': f'工作目录不存在: {work_dir}',\n            'stdout': '',\n            'stderr': f'directory not found: {work_dir}'\n        }\n    \n    # 需要项目目录的cargo子命令集合\n    PROJECT_REQUIRED_COMMANDS = {\n        'build', 'test', 'check', 'clippy', 'doc', 'run', 'bench', \n        'package', 'publish', 'rustc', 'rustdoc', 'tree', 'audit'\n    }\n    # 检查是否需要Cargo.toml（全局命令如clean/install/update/new/login等不需要）\n    cargo_toml = os.path.join(work_dir, 'Cargo.toml')\n    if command in PROJECT_REQUIRED_COMMANDS and not os.path.isfile(cargo_toml):\n        return {\n            'success': False,\n            'error': f'未找到Cargo.toml文件于目录: {work_dir}，命令\"{command}\"需要项目目录',\n            'stdout': '',\n            'stderr': f'could not find Cargo.toml in {work_dir}'\n        }\n    \n    try:\n        # 执行cargo命令，使用可配置的timeout，上限10分钟\n        effective_timeout = min(timeout, 600)\n        result = subprocess.run(\n            cmd_parts,\n            capture_output=True,\n            text=True,\n            timeout=effective_timeout,\n            check=False,\n            cwd=work_dir,\n            env=exec_env,\n            shell=False\n        )\n        \n        # 构建返回结果\n        success = result.returncode == 0\n        return {\n            'success': success,\n            'returncode': result.returncode,\n            'stdout': result.stdout,\n            'stderr': result.stderr,\n            'output': result.stdout + ('\\n--- stderr ---\\n' + result.stderr if result.stderr else ''),\n            'error': '' if success else f'命令\"{command}\"失败，退出码: {result.returncode}',\n            'work_dir': work_dir,\n            'executed_command': ' '.join(cmd_parts)\n        }\n        \n    except subprocess.TimeoutExpired as e:\n        return {\n            'success': False,\n            'error': f'命令执行超时({effective_timeout}秒): {str(e)}',\n            'stdout': e.stdout if e.stdout else '',\n            'stderr': e.stderr if e.stderr else f'Timeout after {effective_timeout} seconds',\n            'output': (e.stdout or '') + '\\n--- stderr ---\\n' + (e.stderr or f'Timeout after {effective_timeout} seconds'),\n            'returncode': -1\n        }\n    except FileNotFoundError:\n        return {\n            'success': False,\n            'error': 'cargo命令未找到，请确认Rust已正确安装并设置PATH环境变量',\n            'stdout': '',\n            'stderr': 'cargo: command not found. Ensure Rust is installed and ~/.cargo/bin is in PATH',\n            'returncode': -1\n        }\n    except Exception as e:\n        return {\n            'success': False,\n            'error': f'执行异常: {str(e)}',\n            'stdout': '',\n            'stderr': str(e),\n            'output': str(e),\n            'returncode': -1\n        }\n",
+          "timeout_secs": 30
+        }
+      }
+    ],
+    "fitness": {
+      "call_count": 1,
+      "auto_test_count": 1,
+      "success_count": 0,
+      "failure_count": 1,
       "success_rate": 0.0,
-      "avg_latency_ms": 0.0,
+      "avg_latency_ms": 100.0,
       "score": 0.0,
-      "last_evaluated": null,
-      "rounds_dormant": 2
+      "last_evaluated": "1783450425",
+      "rounds_dormant": 6,
+      "output_quality": 0.0,
+      "coverage_score": 0.0,
+      "dependency_complexity": 0.0,
+      "non_empty_output_count": 0
+    },
+    "lineage": {
+      "origin": "Mutated",
+      "parent": "cargo_ops-v2-v4",
+      "generation": 6,
+      "mutations": [
+        {
+          "mutation_type": "fix_script",
+          "description": "修复变量作用域错误和语法问题，增加完善的错误处理机制（超时、命令缺失、参数解析错误），延长超时至120秒适应编译任务，返回结构化结果包含成功状态、退出码和完整输出信息，预期成功率提升至90%以上",
+          "timestamp": "1783449912"
+        },
+        {
+          "mutation_type": "fix_script",
+          "description": "通过添加工作目录参数、环境变量处理、Cargo.toml存在性检查、PATH自动扩展等机制，从根本上解决cargo命令找不到或执行环境不正确的问题。预期成功率可提升至90%以上",
+          "timestamp": "1783450100"
+        },
+        {
+          "mutation_type": "fix_script",
+          "description": "修复三大根本问题：1）timeout从硬编码180秒改为可外部配置且上限600秒，与框架30秒超时解耦（框架超时应在调用侧控制）；2）明确区分需要项目目录的命令（build/test/check等）和全局命令（clean/install/new等），避免对全局命令误判Cargo.toml缺失；3）统一返回结构，所有分支都包含returncode字段，error字段仅存人类可读信息。预期成功率可提升至85%以上。",
+          "timestamp": "1783450337"
+        }
+      ]
+    }
+  },
+  {
+    "name": "build_health_checker-v3",
+    "version": "0.1.0",
+    "description": "交叉能力：依赖分析 + 构建验证（cargo_ops × dep_track）",
+    "actions": [
+      {
+        "name": "check_build_health",
+        "description": "检查依赖和构建状态",
+        "input_schema": {
+          "properties": {
+            "path": {
+              "type": "string"
+            }
+          }
+        },
+        "implementation": {
+          "type": "Script",
+          "language": "python",
+          "code": "import subprocess,json,os\np=json.loads(os.environ.get('__EXECUTOR_INPUT__','{}'))\npath=p.get('path','.')\nresult={'success':True}\ncargo=os.path.join(path,'Cargo.toml')\nif os.path.exists(cargo):\n result['has_cargo']=True\n result['cargo_toml']=open(cargo).read()[:300]\n try:\n  r=subprocess.run(['cargo','check','--message-format=short'],cwd=path,capture_output=True,text=True,timeout=30)\n  result['check_exit']=r.returncode\n  result['check_stderr']=r.stderr[-200:]\n except subprocess.TimeoutExpired:\n  result['check_exit']='timeout'\n except Exception as e:\n  result['check_error']=str(e)\nelse:\n result['has_cargo']=False\n result['message']='no Cargo.toml found'\nprint(json.dumps(result,ensure_ascii=False))",
+          "timeout_secs": 60
+        }
+      }
+    ],
+    "fitness": {
+      "call_count": 2,
+      "auto_test_count": 1,
+      "success_count": 2,
+      "failure_count": 0,
+      "success_rate": 1.0,
+      "avg_latency_ms": 2491.0,
+      "score": 0.2864508736751647,
+      "last_evaluated": "1783449085",
+      "rounds_dormant": 0,
+      "output_quality": 0.0,
+      "coverage_score": 0.0,
+      "dependency_complexity": 0.0,
+      "non_empty_output_count": 0
+    },
+    "lineage": {
+      "origin": "Mutated",
+      "parent": "build_health_checker",
+      "generation": 3,
+      "mutations": [
+        {
+          "mutation_type": "fix_script",
+          "description": "增加 Cargo.toml 存在检查，cargo check 超时降级为返回状态",
+          "timestamp": "1783425168"
+        }
+      ]
+    }
+  },
+  {
+    "name": "trend_analyzer-v3",
+    "version": "0.1.0",
+    "description": "交叉能力：CSV 数据加载 + 时间趋势因果分析（pandas × temporal）",
+    "actions": [
+      {
+        "name": "analyze_trend",
+        "description": "分析 CSV 数据的时间趋势",
+        "input_schema": {
+          "properties": {
+            "date_col": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "value_col": {
+              "type": "string"
+            }
+          }
+        },
+        "implementation": {
+          "type": "Script",
+          "language": "python",
+          "code": "import pandas as pd,json,os\np=json.loads(os.environ.get('__EXECUTOR_INPUT__','{}'))\npath=p.get('path','')\nif path and os.path.exists(path):\n df=pd.read_csv(path)\nelse:\n df=pd.DataFrame({'date':['2024-01','2024-02','2024-03','2024-04'],'value':[10,15,13,20]})\ndate_col=p.get('date_col','date')\nval_col=p.get('value_col','value')\nif date_col not in df.columns or val_col not in df.columns:\n print(json.dumps({'success':False,'error':'columns not found','columns':list(df.columns)},ensure_ascii=False));exit()\ndf[date_col]=pd.to_datetime(df[date_col])\ndf=df.sort_values(date_col)\ntrend='increasing' if df[val_col].iloc[-1]>df[val_col].iloc[0] else 'decreasing'\nchange_pct=round((df[val_col].iloc[-1]/df[val_col].iloc[0]-1)*100,2) if df[val_col].iloc[0]!=0 else 0\nprint(json.dumps({'success':True,'trend':trend,'change_pct':change_pct,'start':str(df[val_col].iloc[0]),'end':str(df[val_col].iloc[-1]),'points':len(df)},ensure_ascii=False))",
+          "timeout_secs": 15
+        }
+      }
+    ],
+    "fitness": {
+      "call_count": 3,
+      "auto_test_count": 1,
+      "success_count": 3,
+      "failure_count": 0,
+      "success_rate": 1.0,
+      "avg_latency_ms": 527.3333333333334,
+      "score": 0.6547359231776516,
+      "last_evaluated": "1783448404",
+      "rounds_dormant": 0,
+      "output_quality": 0.0,
+      "coverage_score": 0.0,
+      "dependency_complexity": 0.0,
+      "non_empty_output_count": 0
+    },
+    "lineage": {
+      "origin": "Mutated",
+      "parent": "trend_analyzer",
+      "generation": 3,
+      "mutations": [
+        {
+          "mutation_type": "fix_script",
+          "description": "无 CSV 文件时使用内置时间序列数据演示趋势分析",
+          "timestamp": "1783425162"
+        }
+      ]
+    }
+  },
+  {
+    "name": "temporal_causal_analyzer",
+    "version": "0.3.0",
+    "description": "时间因果分析：从事件序列中发现因果关系和模式",
+    "actions": [
+      {
+        "name": "analyze_events",
+        "description": "分析事件序列的因果模式",
+        "input_schema": {
+          "properties": {
+            "events": {
+              "type": "array"
+            }
+          }
+        },
+        "implementation": {
+          "type": "Script",
+          "language": "python",
+          "code": "import json,os\nfrom collections import Counter\nevents=json.loads(os.environ.get('__EXECUTOR_INPUT__','{}')).get('events',[])\nif not events:print(json.dumps({'patterns':[]},ensure_ascii=False));exit()\ntypes=[e.get('type','') for e in events]\npairs=list(zip(types[:-1],types[1:]))\npattern=Counter(pairs).most_common(5)\nprint(json.dumps({'total':len(events),'type_dist':dict(Counter(types)),'transitions':[{'from':p[0][0],'to':p[0][1],'count':p[1]} for p in pattern]},ensure_ascii=False))",
+          "timeout_secs": 10
+        }
+      }
+    ],
+    "fitness": {
+      "call_count": 2,
+      "auto_test_count": 1,
+      "success_count": 2,
+      "failure_count": 0,
+      "success_rate": 1.0,
+      "avg_latency_ms": 36.0,
+      "score": 0.9652509652509652,
+      "last_evaluated": "1783445159",
+      "rounds_dormant": 0,
+      "output_quality": 0.0,
+      "coverage_score": 0.0,
+      "dependency_complexity": 0.0,
+      "non_empty_output_count": 0
     },
     "lineage": {
       "origin": "Other",

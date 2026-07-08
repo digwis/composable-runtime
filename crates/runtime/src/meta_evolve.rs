@@ -689,22 +689,9 @@ impl ExecutorRegistry {
                     spec.custom_executors.len(),
                     spec.meta_history.len()
                 );
-                // 用 block_on 来同步初始化 RwLock
-                let rt = tokio::runtime::Handle::try_current();
-                match rt {
-                    Ok(handle) => {
-                        let _ = handle.block_on(async {
-                            let mut s = self.spec.write().await;
-                            *s = spec;
-                        });
-                    }
-                    Err(_) => {
-                        // 没有运行时，用 std::sync::RwLock 代替
-                        // 这种情况只在 new() 中发生，此时 RwLock 还没被使用
-                        let mut s = self.spec.blocking_write();
-                        *s = spec;
-                    }
-                }
+                // 直接用 blocking_write，避免在 tokio runtime 内嵌套 block_on
+                let mut s = self.spec.blocking_write();
+                *s = spec;
             }
         }
     }
@@ -1155,7 +1142,7 @@ r#"你是一个运行时元进化分析器。你的任务是分析当前能力�
             },
         );
 
-        let result = match self.llm.execute(&prompt, "auto", None).await {
+        let result = match self.llm.execute(&prompt, "smart:meta", None).await {
             Ok(text) => text,
             Err(e) => {
                 tracing::warn!("元自省 LLM 调用失败: {}", e);
@@ -1261,7 +1248,7 @@ r#"你是一个执行器变异器。以下执行器可能需要优化。
             code = spec.executor_code,
         );
 
-        let result = self.llm.execute(&prompt, "auto", None).await.ok()?;
+        let result = self.llm.execute(&prompt, "coder:optimize", None).await.ok()?;
         let json_str = extract_json(&result);
         let v: serde_json::Value = serde_json::from_str(json_str).ok()?;
 

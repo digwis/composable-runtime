@@ -4,6 +4,7 @@ use crate::evolution::EvolutionEngine;
 use crate::failure_driver::FailureDriver;
 use crate::genome::{LlmExecutor, ScriptedCapability};
 use crate::message_bus::MessageBus;
+use crate::meta_evolve::{ExecutorRegistry, MetaEvolver};
 use crate::platform::Platform;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -317,6 +318,43 @@ exec orch exec "{}" "{}" "$@"
                         "自主循环: 完成 — {} 个目标, {} 成功, {} 失败",
                         auto_results.len(), successes, failures
                     );
+                }
+
+                // 2.6 元进化 — 每 5 轮执行一次，进化执行器本身
+                if round % 5 == 0 {
+                    if let Some(llm) = &llm {
+                        let storage_dir = std::path::PathBuf::from(
+                            std::env::var("HOME").unwrap_or_else(|_| "/tmp".into())
+                        ).join(".orch");
+                        let registry = Arc::new(ExecutorRegistry::new(storage_dir.clone()));
+                        let meta = MetaEvolver::new(
+                            llm.clone(),
+                            bus.clone(),
+                            platform.clone(),
+                            registry.clone(),
+                        );
+
+                        let mut state = shared.lock().await;
+                        tracing::info!("元进化: 启动...");
+                        match tokio::time::timeout(
+                            std::time::Duration::from_secs(300),
+                            meta.meta_evolve_once(&mut state.evolution),
+                        ).await {
+                            Ok(Ok(actions)) => {
+                                if actions.is_empty() {
+                                    tracing::info!("元进化: 无需进化动作");
+                                } else {
+                                    tracing::info!("元进化: 动作: {}", actions.join(", "));
+                                }
+                            }
+                            Ok(Err(e)) => {
+                                tracing::warn!("元进化: 失败: {}", e);
+                            }
+                            Err(_) => {
+                                tracing::warn!("元进化: 超时 (300s)，跳过");
+                            }
+                        }
+                    }
                 }
 
                 // 3. 保存 + 重新注入 PATH + 注册新能力

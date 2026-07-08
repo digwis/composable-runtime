@@ -209,7 +209,7 @@ r#"你是自主运行时的目标生成器。
             report_json, caps_str
         );
 
-        let response = match self.llm.execute(&prompt, "auto", None).await {
+        let response = match self.llm.execute(&prompt, "smart:goals", None).await {
             Ok(r) => r,
             Err(e) => {
                 tracing::warn!("自主目标生成: LLM 调用失败: {}", e);
@@ -247,7 +247,7 @@ r#"你是自主运行时的目标生成器。
             if let Some(genome) = evolution.genomes().get(cap_name) {
                 if !genome.actions.is_empty() {
                     let action = &genome.actions[0];
-                    let input = self.generate_input_for(genome);
+                    let input = self.generate_input_for(genome).await;
 
                     let msg = crate::message::Message::builder()
                         .from("autonomous")
@@ -266,17 +266,31 @@ r#"你是自主运行时的目标生成器。
                                     .and_then(|e| e.as_str())
                                     .map(String::from)
                             };
+                            let elapsed = start.elapsed().as_millis() as u64;
+
+                            // 回馈适应度：自主循环调用算真实业务调用
+                            if let Some(g) = evolution.genomes_mut().get_mut(cap_name) {
+                                g.fitness.record_real_call(success, elapsed as f64);
+                            }
+
                             let result = AutonomousResult {
                                 goal: goal.clone(),
                                 success,
                                 output: resp.payload,
                                 error,
-                                elapsed_ms: start.elapsed().as_millis() as u64,
+                                elapsed_ms: elapsed,
                             };
                             self.add_history(result.clone());
                             return result;
                         }
                         Err(e) => {
+                            let elapsed = start.elapsed().as_millis() as u64;
+
+                            // 失败也回馈
+                            if let Some(g) = evolution.genomes_mut().get_mut(cap_name) {
+                                g.fitness.record_real_call(false, elapsed as f64);
+                            }
+
                             let result = AutonomousResult {
                                 goal: goal.clone(),
                                 success: false,
@@ -331,7 +345,7 @@ r#"你是一个能力的测试员。有一个新能力：
             env_json,
         );
 
-        let test_input = match self.llm.execute(&prompt, "auto", None).await {
+        let test_input = match self.llm.execute(&prompt, "fast:envtest", None).await {
             Ok(r) => {
                 serde_json::from_str::<serde_json::Value>(&r).unwrap_or(serde_json::json!({}))
             }
@@ -476,11 +490,48 @@ r#"你是一个能力的测试员。有一个新能力：
         }
     }
 
-    fn generate_input_for(&self, genome: &CapabilityGenome) -> serde_json::Value {
+    async fn generate_input_for(&self, genome: &CapabilityGenome) -> serde_json::Value {
         if genome.actions.is_empty() {
             return serde_json::json!({});
         }
         let action = &genome.actions[0];
+        let cap_name = &genome.name;
+        let cap_desc = &genome.description;
+        let action_name = &action.name;
+        let action_desc = &action.description;
+        let schema = &action.input_schema;
+
+        // 用 LLM 生成真实输入
+        let schema_str = serde_json::to_string_pretty(schema).unwrap_or_default();
+        let prompt = format!(
+r#"为能力测试生成真实合理的输入数据。
+
+能力: {cap_name} — {cap_desc}
+动作: {action_name} — {action_desc}
+输入 Schema: {schema_str}
+
+请生成一个真实场景下的测试输入，确保数据有意义、能触发核心逻辑。
+返回严格 JSON（直接可用的输入对象，不要包裹在其他结构中）:"#);
+
+        match self.llm.execute(&prompt, "fast:autoinput", None).await {
+            Ok(text) => {
+                let json_str = extract_json(&text);
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&json_str) {
+                    if v.is_object() {
+                        return v;
+                    }
+                }
+                // LLM 返回无效 JSON，回退到占位值
+                self.fallback_input(action)
+            }
+            Err(_) => {
+                // LLM 调用失败，回退到占位值
+                self.fallback_input(action)
+            }
+        }
+    }
+
+    fn fallback_input(&self, action: &crate::genome::ActionGene) -> serde_json::Value {
         let mut test = serde_json::Map::new();
         if let Some(props) = action.input_schema.get("properties").and_then(|p| p.as_object()) {
             for (key, schema) in props {
@@ -504,4 +555,13 @@ fn now_secs() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
+}
+
+fn extract_json(text: &str) -> String {
+    let start = text.find('{');
+    let end = text.rfind('}');
+    match (start, end) {
+        (Some(s), Some(e)) if e > s => text[s..=e].to_string(),
+        _ => text.trim().to_string(),
+    }
 }

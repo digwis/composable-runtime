@@ -66,8 +66,80 @@ impl EvolutionEngine {
     /// 注册基因组
     pub fn register_genome(&mut self, genome: CapabilityGenome) {
         let name = genome.name.clone();
-        self.genomes.insert(name, genome);
+        // P2-2: 自动计算依赖复杂度
+        let mut g = genome;
+        g.fitness.dependency_complexity = crate::genome::FitnessGene::compute_dependency_complexity(&g);
+        self.genomes.insert(name, g);
         self.save();
+    }
+
+    /// P0-2: 移除基因组（淘汰旧版本或失败变体）
+    pub fn remove_genome(&mut self, name: &str) -> Option<CapabilityGenome> {
+        let removed = self.genomes.remove(name);
+        if removed.is_some() {
+            self.save();
+        }
+        removed
+    }
+
+    /// P3-3: 查找依赖指定能力的所有能力（Composite 依赖）
+    ///
+    /// 返回依赖该能力的 Composite 能力名列表，
+    /// 用于淘汰前检查是否会引发连锁失败。
+    pub fn find_dependents(&self, name: &str) -> Vec<String> {
+        use crate::genome::ActionImpl;
+        self.genomes.iter()
+            .filter(|(_, g)| {
+                g.actions.iter().any(|a| {
+                    if let ActionImpl::Composite { steps } = &a.implementation {
+                        steps.iter().any(|s| s.capability == name)
+                    } else {
+                        false
+                    }
+                })
+            })
+            .map(|(n, _)| n.clone())
+            .collect()
+    }
+
+    /// P5: 多样性度量 — 计算能力库的多样性指数
+    ///
+    /// 基于能力名称的关键词重叠度：如果大量能力名称包含相同关键词
+    /// (如 cargo_ops-v1, cargo_ops-v2, cargo_ops-v3)，说明多样性低。
+    ///
+    /// 返回 (diversity_score, duplicate_groups)
+    /// - diversity_score: 0.0~1.0，越高越好
+    /// - duplicate_groups: 重复能力组列表
+    pub fn diversity_metrics(&self) -> (f64, Vec<(String, Vec<String>)>) {
+        use std::collections::HashMap;
+
+        // 提取每个能力名的基础关键词（去掉版本后缀）
+        let base_names: HashMap<String, Vec<String>> = {
+            let mut map: HashMap<String, Vec<String>> = HashMap::new();
+            for name in self.genomes.keys() {
+                // 去掉 -vN 后缀得到基础名
+                let base = name.split("-v").next().unwrap_or(name).to_string();
+                map.entry(base).or_default().push(name.clone());
+            }
+            map
+        };
+
+        // 重复组：基础名有多个版本
+        let duplicate_groups: Vec<(String, Vec<String>)> = base_names.iter()
+            .filter(|(_, names)| names.len() > 1)
+            .map(|(base, names)| (base.clone(), names.clone()))
+            .collect();
+
+        // 多样性 = 1 - 重复比例
+        let total = self.genomes.len() as f64;
+        let unique = base_names.len() as f64;
+        let diversity = if total > 0.0 {
+            unique / total
+        } else {
+            1.0
+        };
+
+        (diversity, duplicate_groups)
     }
 
     /// 获取所有基因组
@@ -180,6 +252,7 @@ impl EvolutionEngine {
                 generation: std::cmp::max(genome_a.lineage.generation, genome_b.lineage.generation) + 1,
                 mutations: Vec::new(),
             },
+            test_suite: Vec::new(),
         };
 
         // 交叉策略：各取一半动作

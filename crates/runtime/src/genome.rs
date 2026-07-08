@@ -31,6 +31,10 @@ pub struct CapabilityGenome {
     /// 谱系基因 — 进化历史
     #[serde(default)]
     pub lineage: LineageGene,
+
+    /// P4: 持久化测试套件 — 积累的测试用例，变异后回归测试
+    #[serde(default)]
+    pub test_suite: Vec<TestCase>,
 }
 
 /// 动作基因 — 描述一个动作的接口和实现
@@ -134,10 +138,6 @@ pub struct FitnessGene {
     /// 总调用次数（含自测试）
     pub call_count: u32,
     /// 自动测试调用次数（不含真实业务调用）
-    ///
-    /// 区分"自测试"与"真实业务调用"是负反馈的关键：
-    /// 自测试只能证明能力"能跑通"，不能证明能力"有用"。
-    /// 只有真实业务调用才能让能力免于淘汰。
     #[serde(default)]
     pub auto_test_count: u32,
     /// 成功次数
@@ -153,11 +153,23 @@ pub struct FitnessGene {
     /// 最后评估时间
     pub last_evaluated: Option<String>,
     /// 连续休眠轮数（未被真实业务调用）
-    ///
-    /// 注意：休眠判断基于 real_call_count，而非 call_count。
-    /// 这样自测试过的能力如果没有真实业务调用，仍会被淘汰。
     #[serde(default)]
     pub rounds_dormant: u32,
+    /// P2-2: 输出质量评分（0.0 ~ 1.0）
+    /// 基于输出内容非空率、结构化程度、信息量
+    #[serde(default)]
+    pub output_quality: f64,
+    /// P2-2: 覆盖范围评分（0.0 ~ 1.0）
+    /// 基于不同输入组合的测试覆盖度
+    #[serde(default)]
+    pub coverage_score: f64,
+    /// P2-2: 依赖复杂度（0.0 ~ 1.0，越低越好）
+    /// 基于能力依赖的外部工具数量和环境要求
+    #[serde(default)]
+    pub dependency_complexity: f64,
+    /// P2-2: 累计输出非空次数（用于计算 output_quality）
+    #[serde(default)]
+    pub non_empty_output_count: u32,
 }
 
 impl FitnessGene {
@@ -174,6 +186,7 @@ impl FitnessGene {
         self.call_count += 1;
         if success {
             self.success_count += 1;
+            self.non_empty_output_count += 1;
         } else {
             self.failure_count += 1;
         }
@@ -181,9 +194,19 @@ impl FitnessGene {
         let n = self.call_count as f64;
         self.avg_latency_ms = (self.avg_latency_ms * (n - 1.0) + latency_ms) / n;
         self.success_rate = self.success_count as f64 / self.call_count as f64;
-        // 综合评分：成功率 * 速度因子（满分 1.0）
+
+        // P2-2: 计算输出质量
+        self.output_quality = self.non_empty_output_count as f64 / self.call_count as f64;
+
+        // P2-2: 计算覆盖范围（基于调用次数的 log 缩放）
+        self.coverage_score = (self.call_count as f64).ln_1p() / 10.0;
+        if self.coverage_score > 1.0 { self.coverage_score = 1.0; }
+
+        // P2-2: 综合评分 = 成功率 * 速度因子 * (0.5 + 0.3*输出质量 + 0.2*覆盖范围) * (1 - 0.1*依赖复杂度)
         let speed_factor = 1.0 / (1.0 + self.avg_latency_ms / 1000.0);
-        self.score = self.success_rate * speed_factor;
+        let quality_factor = 0.5 + 0.3 * self.output_quality + 0.2 * self.coverage_score;
+        let dependency_penalty = 1.0 - 0.1 * self.dependency_complexity;
+        self.score = self.success_rate * speed_factor * quality_factor * dependency_penalty;
         self.last_evaluated = Some(now_string());
         // 真实调用清零休眠计数
         self.rounds_dormant = 0;
@@ -200,16 +223,55 @@ impl FitnessGene {
         self.auto_test_count += 1;
         if success {
             self.success_count += 1;
+            self.non_empty_output_count += 1;
         } else {
             self.failure_count += 1;
         }
         let n = self.call_count as f64;
         self.avg_latency_ms = (self.avg_latency_ms * (n - 1.0) + latency_ms) / n;
         self.success_rate = self.success_count as f64 / self.call_count as f64;
+        // P2-2: 自测试评分也纳入输出质量
+        self.output_quality = self.non_empty_output_count as f64 / self.call_count as f64;
         // 自测试只给低基础分，真实业务调用才会通过 record_real_call 提升分数
-        self.score = self.success_rate * 0.1;
+        self.score = self.success_rate * 0.1 * (0.5 + 0.5 * self.output_quality);
         self.last_evaluated = Some(now_string());
         // 注意：不清零 rounds_dormant
+    }
+
+    /// P2-2: 计算依赖复杂度（0.0 ~ 1.0，越低越好）
+    ///
+    /// 基于 action 实现类型和外部依赖数量：
+    /// - Script: 根据代码中 import 的外部库数量
+    /// - Composite: 根据编排步骤数量
+    /// - Llm: 固定 0.3（需要 LLM 后端）
+    /// - Native: 0.0（无额外依赖）
+    pub fn compute_dependency_complexity(genome: &CapabilityGenome) -> f64 {
+        let mut max_complexity = 0.0;
+        for action in &genome.actions {
+            let complexity = match &action.implementation {
+                ActionImpl::Script { code, language, .. } => {
+                    if language == "python" {
+                        let import_count = code.lines()
+                            .filter(|l| l.trim_start().starts_with("import ") || l.trim_start().starts_with("from "))
+                            .count();
+                        (import_count as f64 / 10.0).min(1.0)
+                    } else {
+                        0.5
+                    }
+                }
+                ActionImpl::Composite { steps } => {
+                    (steps.len() as f64 / 5.0).min(1.0)
+                }
+                ActionImpl::Llm { .. } => 0.3,
+                ActionImpl::Native { .. } => 0.0,
+                ActionImpl::Rule { .. } => 0.0,
+                ActionImpl::Custom { .. } => 0.5,
+            };
+            if complexity > max_complexity {
+                max_complexity = complexity;
+            }
+        }
+        max_complexity
     }
 }
 
@@ -232,7 +294,7 @@ pub struct LineageGene {
 }
 
 /// 能力来源
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub enum Origin {
     #[default]
     Native,
@@ -259,6 +321,19 @@ pub struct MutationRecord {
     pub timestamp: String,
 }
 
+/// P4: 持久化测试用例 — 变异后回归测试使用
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TestCase {
+    /// 测试输入
+    pub input: serde_json::Value,
+    /// 预期成功
+    pub expect_success: bool,
+    /// 测试来源（auto_test / real_validation / autonomous）
+    pub source: String,
+    /// 记录时间
+    pub timestamp: String,
+}
+
 impl CapabilityGenome {
     /// 创建新的基因组
     pub fn new(name: impl Into<String>, description: impl Into<String>) -> Self {
@@ -269,6 +344,7 @@ impl CapabilityGenome {
             actions: Vec::new(),
             fitness: FitnessGene::default(),
             lineage: LineageGene::default(),
+            test_suite: Vec::new(),
         }
     }
 
@@ -281,6 +357,27 @@ impl CapabilityGenome {
     /// 获取动作名称列表
     pub fn action_names(&self) -> Vec<String> {
         self.actions.iter().map(|a| a.name.clone()).collect()
+    }
+
+    /// P4: 添加测试用例到持久化测试套件
+    pub fn add_test_case(&mut self, input: serde_json::Value, expect_success: bool, source: &str) {
+        // 避免重复（简单去重：input 序列化相同）
+        let input_str = serde_json::to_string(&input).unwrap_or_default();
+        if self.test_suite.iter().any(|t| {
+            serde_json::to_string(&t.input).unwrap_or_default() == input_str
+        }) {
+            return;
+        }
+        // 最多保留 20 个测试用例
+        if self.test_suite.len() >= 20 {
+            self.test_suite.remove(0);
+        }
+        self.test_suite.push(TestCase {
+            input,
+            expect_success,
+            source: source.to_string(),
+            timestamp: now_string(),
+        });
     }
 
     /// 获取动作描述（给 AI 看）
@@ -615,6 +712,12 @@ pub struct LlmExecutor {
     cli_cmd: String,
     /// CLI 使用的模型
     cli_model: String,
+    /// 快速模型（量大简单任务）— 默认 ORCH_MODEL
+    fast_model: String,
+    /// 深度推理模型（归因分析、变异方案）
+    smart_model: String,
+    /// 代码生成模型（新能力代码、变异代码）
+    coder_model: String,
 }
 
 /// LLM API 响应 — Anthropic 格式
@@ -666,6 +769,13 @@ impl LlmExecutor {
             use_cli,
             cli_cmd,
             cli_model,
+            fast_model: std::env::var("ORCH_MODEL_FAST")
+                .or_else(|_| std::env::var("ORCH_MODEL"))
+                .unwrap_or_else(|_| "MiniMax-M3".to_string()),
+            smart_model: std::env::var("ORCH_MODEL_SMART")
+                .unwrap_or_else(|_| "MiniMax-M3".to_string()),
+            coder_model: std::env::var("ORCH_MODEL_CODER")
+                .unwrap_or_else(|_| "MiniMax-M3".to_string()),
         }
     }
 
@@ -749,9 +859,44 @@ impl LlmExecutor {
         }
     }
 
+    /// 根据模型前缀解析实际模型名
+    fn resolve_model(&self, model: &str) -> String {
+        if model.starts_with("fast:") {
+            self.fast_model.clone()
+        } else if model.starts_with("smart:") {
+            self.smart_model.clone()
+        } else if model.starts_with("coder:") {
+            self.coder_model.clone()
+        } else if model == "auto" {
+            std::env::var("ORCH_MODEL")
+                .unwrap_or_else(|_| self.fast_model.clone())
+        } else {
+            model.to_string()
+        }
+    }
+
+    /// P1-2: 将 prompt 分割为可缓存的 system 前缀和可变的 user 部分
+    ///
+    /// 进化系统的大部分 LLM 调用有公共前缀（角色设定、输出格式说明），
+    /// 将这部分提取为 system message 可以被 API 自动缓存。
+    fn split_prompt_for_cache(prompt: &str) -> (Option<String>, String) {
+        // 寻找 "返回严格 JSON" 或 "只返回 JSON" 作为分割点
+        let split_markers = ["返回严格 JSON", "只返回 JSON", "请判断目标是否已达成", "请创造一个新能力"];
+        for marker in &split_markers {
+            if let Some(pos) = prompt.find(marker) {
+                let system_part = &prompt[..pos];
+                let user_part = &prompt[pos..];
+                if system_part.len() > 100 {
+                    return (Some(system_part.to_string()), user_part.to_string());
+                }
+            }
+        }
+        (None, prompt.to_string())
+    }
+
     /// OpenAI 兼容格式调用
     async fn execute_openai(&self, prompt: &str, model: &str, system: Option<&str>) -> Result<String, String> {
-        use serde::Serialize;
+        use serde::{Serialize, Deserialize};
 
         #[derive(Serialize)]
         struct OpenAiReq {
@@ -766,23 +911,28 @@ impl LlmExecutor {
             content: String,
         }
 
+        // P1-2: prompt caching — 将公共前缀提取为 system prompt
+        // DeepSeek API 自动缓存相同前缀，system message 会被优先缓存
+        let (system_msg, user_prompt) = if let Some(sys) = system {
+            (Some(sys.to_string()), prompt.to_string())
+        } else {
+            // 自动提取公共前缀作为 system prompt（以 "返回严格 JSON" 为分割点）
+            Self::split_prompt_for_cache(prompt)
+        };
+
         let mut messages = vec![];
-        if let Some(sys) = system {
+        if let Some(sys) = &system_msg {
             messages.push(OpenAiMsg {
                 role: "system".into(),
-                content: sys.to_string(),
+                content: sys.clone(),
             });
         }
         messages.push(OpenAiMsg {
             role: "user".into(),
-            content: prompt.to_string(),
+            content: user_prompt,
         });
 
-        let resolved_model = if model == "auto" {
-            std::env::var("ORCH_MODEL").unwrap_or_else(|_| "glm-5.1".to_string())
-        } else {
-            model.to_string()
-        };
+        let resolved_model = self.resolve_model(model);
 
         let req = OpenAiReq {
             model: resolved_model,
@@ -834,6 +984,21 @@ impl LlmExecutor {
                 }
 
                 let body_text = resp.text().await.unwrap_or_default();
+
+                // P1-2: 解析 usage 统计（含缓存命中信息）
+                if let Ok(usage) = serde_json::from_str::<serde_json::Value>(&body_text)
+                    .map(|v| v.get("usage").cloned().unwrap_or(serde_json::json!({})))
+                {
+                    let prompt_tokens = usage.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                    let cached = usage.get("prompt_cache_hit_tokens")
+                        .or_else(|| usage.get("cached_tokens"))
+                        .and_then(|v| v.as_u64()).unwrap_or(0);
+                    if cached > 0 {
+                        tracing::info!("💾 prompt cache: {}/{} tokens cached ({:.0}%)",
+                            cached, prompt_tokens, cached as f64 / prompt_tokens as f64 * 100.0);
+                    }
+                }
+
                 let r: OpenAiResp = match serde_json::from_str(&body_text) {
                     Ok(r) => r,
                     Err(e) => {

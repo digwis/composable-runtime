@@ -644,6 +644,15 @@ async fn main() -> anyhow::Result<()> {
             // 设置默认模型供运行时内部使用
             std::env::set_var("ORCH_MODEL", &model);
 
+            // 多模型路由配置（可通过环境变量覆盖）
+            let fast_model = std::env::var("ORCH_MODEL_FAST").unwrap_or_else(|_| model.clone());
+            let smart_model = std::env::var("ORCH_MODEL_SMART").unwrap_or_else(|_| "MiniMax-M3".to_string());
+            let coder_model = std::env::var("ORCH_MODEL_CODER").unwrap_or_else(|_| "MiniMax-M3".to_string());
+            println!("🧬 多模型路由配置:");
+            println!("  fast (测试输入/简单任务): {}", fast_model);
+            println!("  smart (归因分析/目标生成): {}", smart_model);
+            println!("  coder (代码生成/变异):    {}", coder_model);
+
             let platform = Platform::detect();
             let storage_dir = storage.unwrap_or_else(|| PathBuf::from(format!("{}/.orch", std::env::var("HOME").unwrap_or_else(|_| "/tmp".into()))));
             std::fs::create_dir_all(&storage_dir)
