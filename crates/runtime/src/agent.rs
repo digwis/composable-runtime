@@ -283,7 +283,10 @@ impl Agent {
                             if let Some(llm) = &self.llm_executor {
                                 let bus = self.orchestrator.bus().clone();
                                 let mut cap = crate::genome::ScriptedCapability::from_genome(
-                                    evo.genomes().get(&cap_name).unwrap().clone(),
+                                    evo.genomes()
+                                        .get(&cap_name)
+                                        .expect("刚注册的基因组必须存在")
+                                        .clone(),
                                 )
                                 .with_llm(llm.clone())
                                 .with_bus(bus);
@@ -296,7 +299,10 @@ impl Agent {
                             self.memory
                                 .record_evolution(crate::memory::EvolutionRecord {
                                     event_type: "generation".into(),
-                                    capability: capabilities_created.last().unwrap().clone(),
+                                    capability: capabilities_created
+                                        .last()
+                                        .expect("至少创建了一个能力")
+                                        .clone(),
                                     description: "AI 生成新能力".into(),
                                     generation: 1,
                                     timestamp: now_string(),

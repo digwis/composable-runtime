@@ -1266,7 +1266,7 @@ fn render_template(template: &str, input: &serde_json::Value) -> String {
 
     // 支持 {{a.b.c}} 形式的嵌套路径引用
     // 用正则找到所有 {{...}} 占位符
-    let re = regex::Regex::new(r"\{\{([\w.]+)\}\}").unwrap();
+    let re = regex::Regex::new(r"\{\{([\w.]+)\}\}").expect("静态正则表达式编译必须成功");
     for cap in re.captures_iter(template) {
         let path = &cap[1];
         let placeholder = format!("{{{{{}}}}}", path);

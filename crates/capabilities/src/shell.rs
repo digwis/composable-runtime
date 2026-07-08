@@ -124,7 +124,7 @@ impl Capability for ShellCapability {
                     .from("shell")
                     .to(msg.from.as_deref().unwrap_or("orchestrator"))
                     .action("exec.response")
-                    .payload(serde_json::to_value(&output).unwrap())
+                    .payload(serde_json::to_value(&output).unwrap_or_default())
                     .build())
             }
 

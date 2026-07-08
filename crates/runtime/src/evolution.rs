@@ -236,7 +236,7 @@ impl EvolutionEngine {
         self.genomes.insert(new_name.clone(), new_genome);
         self.save();
 
-        Ok(self.genomes.get(&new_name).unwrap())
+        Ok(self.genomes.get(&new_name).expect("刚插入的基因组必须存在"))
     }
 
     /// 交叉 — 两个能力的基因混合
@@ -298,7 +298,7 @@ impl EvolutionEngine {
         self.genomes.insert(name.clone(), new_genome);
         self.save();
 
-        Ok(self.genomes.get(&name).unwrap())
+        Ok(self.genomes.get(&name).expect("刚插入的基因组必须存在"))
     }
 
     /// 自然选择 — 淘汰适应度低于阈值的能力

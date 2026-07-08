@@ -69,7 +69,7 @@ impl Capability for ComputeCapability {
             .from("compute")
             .to(msg.from.as_deref().unwrap_or("orchestrator"))
             .action(format!("{}.response", msg.action))
-            .payload(serde_json::to_value(&output).unwrap())
+            .payload(serde_json::to_value(&output).unwrap_or_default())
             .build())
     }
 }

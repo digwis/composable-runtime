@@ -140,7 +140,7 @@ impl Capability for FsCapability {
                     .from("fs")
                     .to(msg.from.as_deref().unwrap_or("orchestrator"))
                     .action("read.response")
-                    .payload(serde_json::to_value(&output).unwrap())
+                    .payload(serde_json::to_value(&output).unwrap_or_default())
                     .build())
             }
 
@@ -197,7 +197,7 @@ impl Capability for FsCapability {
                     .from("fs")
                     .to(msg.from.as_deref().unwrap_or("orchestrator"))
                     .action("write.response")
-                    .payload(serde_json::to_value(&output).unwrap())
+                    .payload(serde_json::to_value(&output).unwrap_or_default())
                     .build())
             }
 
@@ -226,7 +226,7 @@ impl Capability for FsCapability {
                     .from("fs")
                     .to(msg.from.as_deref().unwrap_or("orchestrator"))
                     .action("mkdir.response")
-                    .payload(serde_json::to_value(&output).unwrap())
+                    .payload(serde_json::to_value(&output).unwrap_or_default())
                     .build())
             }
 
@@ -278,7 +278,7 @@ impl Capability for FsCapability {
                     .from("fs")
                     .to(msg.from.as_deref().unwrap_or("orchestrator"))
                     .action("list.response")
-                    .payload(serde_json::to_value(&output).unwrap())
+                    .payload(serde_json::to_value(&output).unwrap_or_default())
                     .build())
             }
 
@@ -315,7 +315,7 @@ impl Capability for FsCapability {
                     .from("fs")
                     .to(msg.from.as_deref().unwrap_or("orchestrator"))
                     .action("delete.response")
-                    .payload(serde_json::to_value(&output).unwrap())
+                    .payload(serde_json::to_value(&output).unwrap_or_default())
                     .build())
             }
 
@@ -350,7 +350,7 @@ impl Capability for FsCapability {
                     .from("fs")
                     .to(msg.from.as_deref().unwrap_or("orchestrator"))
                     .action("move.response")
-                    .payload(serde_json::to_value(&output).unwrap())
+                    .payload(serde_json::to_value(&output).unwrap_or_default())
                     .build())
             }
 

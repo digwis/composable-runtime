@@ -87,7 +87,7 @@ impl Capability for StoreCapability {
                     .from("store")
                     .to(msg.from.as_deref().unwrap_or("orchestrator"))
                     .action("set.response")
-                    .payload(serde_json::to_value(&output).unwrap())
+                    .payload(serde_json::to_value(&output).unwrap_or_default())
                     .build())
             }
             "get" => {
@@ -103,7 +103,7 @@ impl Capability for StoreCapability {
                     .from("store")
                     .to(msg.from.as_deref().unwrap_or("orchestrator"))
                     .action("get.response")
-                    .payload(serde_json::to_value(&output).unwrap())
+                    .payload(serde_json::to_value(&output).unwrap_or_default())
                     .build())
             }
             "delete" => {
@@ -117,7 +117,7 @@ impl Capability for StoreCapability {
                     .from("store")
                     .to(msg.from.as_deref().unwrap_or("orchestrator"))
                     .action("delete.response")
-                    .payload(serde_json::to_value(&output).unwrap())
+                    .payload(serde_json::to_value(&output).unwrap_or_default())
                     .build())
             }
             "list" => {

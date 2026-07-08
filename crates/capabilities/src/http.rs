@@ -141,7 +141,7 @@ impl Capability for HttpCapability {
                     .from("http")
                     .to(msg.from.as_deref().unwrap_or("orchestrator"))
                     .action(format!("{}.response", msg.action))
-                    .payload(serde_json::to_value(&output).unwrap())
+                    .payload(serde_json::to_value(&output).unwrap_or_default())
                     .build())
             }
 
@@ -192,7 +192,7 @@ impl Capability for HttpCapability {
                     .from("http")
                     .to(msg.from.as_deref().unwrap_or("orchestrator"))
                     .action("download.response")
-                    .payload(serde_json::to_value(&output).unwrap())
+                    .payload(serde_json::to_value(&output).unwrap_or_default())
                     .build())
             }
 

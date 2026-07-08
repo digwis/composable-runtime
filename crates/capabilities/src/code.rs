@@ -97,7 +97,7 @@ impl Capability for CodeCapability {
                     .from("code")
                     .to(msg.from.as_deref().unwrap_or("orchestrator"))
                     .action("run_python.response")
-                    .payload(serde_json::to_value(&output).unwrap())
+                    .payload(serde_json::to_value(&output).unwrap_or_default())
                     .build())
             }
 
@@ -135,7 +135,7 @@ impl Capability for CodeCapability {
                     .from("code")
                     .to(msg.from.as_deref().unwrap_or("orchestrator"))
                     .action("run_node.response")
-                    .payload(serde_json::to_value(&output).unwrap())
+                    .payload(serde_json::to_value(&output).unwrap_or_default())
                     .build())
             }
 
@@ -165,7 +165,7 @@ impl Capability for CodeCapability {
                     .from("code")
                     .to(msg.from.as_deref().unwrap_or("orchestrator"))
                     .action("run_python_file.response")
-                    .payload(serde_json::to_value(&output).unwrap())
+                    .payload(serde_json::to_value(&output).unwrap_or_default())
                     .build())
             }
 
@@ -195,7 +195,7 @@ impl Capability for CodeCapability {
                     .from("code")
                     .to(msg.from.as_deref().unwrap_or("orchestrator"))
                     .action("run_node_file.response")
-                    .payload(serde_json::to_value(&output).unwrap())
+                    .payload(serde_json::to_value(&output).unwrap_or_default())
                     .build())
             }
 

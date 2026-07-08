@@ -277,7 +277,11 @@ async fn main() -> anyhow::Result<()> {
 
     match cli.command {
         Commands::Run { workflow, verbose } => {
-            let wf = Workflow::from_file(workflow.to_str().unwrap())?;
+            let wf = Workflow::from_file(
+                workflow
+                    .to_str()
+                    .ok_or_else(|| anyhow::anyhow!("工作流路径包含非 UTF-8 字符"))?,
+            )?;
             println!("\n📋 工作流: {}", wf.name);
             if !wf.description.is_empty() {
                 println!("   描述: {}\n", wf.description);

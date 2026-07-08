@@ -474,8 +474,8 @@ impl ExecutorRegistry {
                         "2021",
                         "-O",
                         "-o",
-                        wasm_path.to_str().unwrap(),
-                        src_path.to_str().unwrap(),
+                        wasm_path.to_str().ok_or("WASM 路径包含非 UTF-8 字符")?,
+                        src_path.to_str().ok_or("源码路径包含非 UTF-8 字符")?,
                     ])
                     .stdout(std::process::Stdio::piped())
                     .stderr(std::process::Stdio::piped())
@@ -653,8 +653,8 @@ impl ExecutorRegistry {
                         "--crate-type",
                         "cdylib",
                         "-o",
-                        lib_path.to_str().unwrap(),
-                        src_path.to_str().unwrap(),
+                        lib_path.to_str().ok_or("库路径包含非 UTF-8 字符")?,
+                        src_path.to_str().ok_or("源码路径包含非 UTF-8 字符")?,
                     ])
                     .stdout(std::process::Stdio::piped())
                     .stderr(std::process::Stdio::piped())
@@ -917,7 +917,7 @@ pub extern \"C\" fn execute(input: *const c_char) -> *mut c_char {
     // ─── 用户代码结束 ───
 
     // 如果用户代码没有设置 __output，使用默认值
-    let result = CString::new(__output).unwrap_or_else(|_| CString::new(\"{\\\"error\\\": \\\"output contains null byte\\\"}\").unwrap());
+    let result = CString::new(__output).unwrap_or_else(|_| CString::new(\"{\\\"error\\\": \\\"output contains null byte\\\"}\").expect(\"error msg has no null\"));
     result.into_raw()
 }
 

@@ -158,7 +158,14 @@ impl Orchestrator {
                     if should_stop {
                         return Err(MessageError::Internal {
                             capability: step.capability.clone(),
-                            detail: format!("步骤 '{}' 失败: {}", step.name, error_detail.unwrap()),
+                            detail: format!(
+                                "步骤 '{}' 失败: {}",
+                                step.name,
+                                error_detail
+                                    .as_ref()
+                                    .map(|e| e.to_string())
+                                    .unwrap_or_else(|| "未知错误".into())
+                            ),
                         });
                     }
                 }
@@ -184,7 +191,13 @@ impl Orchestrator {
                     let mut group_retried = 0;
 
                     while let Some(res) = join_set.join_next().await {
-                        let (output, retried, failed) = res.unwrap();
+                        let (output, retried, failed) = match res {
+                            Ok(v) => v,
+                            Err(e) => {
+                                tracing::warn!("并行任务异常: {}", e);
+                                continue;
+                            }
+                        };
                         group_retried += retried;
                         if failed > 0 {
                             group_failed += 1;

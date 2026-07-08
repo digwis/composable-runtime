@@ -51,7 +51,7 @@ impl Capability for GreetCapability {
                     .from("greet")
                     .to(msg.from.as_deref().unwrap_or("orchestrator"))
                     .action("hello.response")
-                    .payload(serde_json::to_value(&output).unwrap())
+                    .payload(serde_json::to_value(&output).unwrap_or_default())
                     .build())
             }
             "goodbye" => {
@@ -64,7 +64,7 @@ impl Capability for GreetCapability {
                     .from("greet")
                     .to(msg.from.as_deref().unwrap_or("orchestrator"))
                     .action("goodbye.response")
-                    .payload(serde_json::to_value(&output).unwrap())
+                    .payload(serde_json::to_value(&output).unwrap_or_default())
                     .build())
             }
             _ => Err(MessageError::UnsupportedAction {
