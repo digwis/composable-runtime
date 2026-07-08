@@ -637,3 +637,99 @@ fn which(cmd: &str) -> Option<PathBuf> {
     }
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_daemon_config_default() {
+        let config = DaemonConfig::default();
+        assert!(config
+            .socket_path
+            .to_string_lossy()
+            .contains(".orch/socket"));
+        assert!(config.bin_dir.to_string_lossy().contains(".orch/bin"));
+        assert_eq!(config.evolution_interval_secs, 300);
+        assert_eq!(config.max_rounds, 100);
+    }
+
+    #[test]
+    fn test_daemon_config_custom() {
+        let config = DaemonConfig {
+            socket_path: PathBuf::from("/tmp/test.sock"),
+            bin_dir: PathBuf::from("/tmp/bin"),
+            storage_dir: PathBuf::from("/tmp/storage"),
+            evolution_interval_secs: 60,
+            max_rounds: 10,
+        };
+        assert_eq!(config.socket_path, PathBuf::from("/tmp/test.sock"));
+        assert_eq!(config.evolution_interval_secs, 60);
+        assert_eq!(config.max_rounds, 10);
+    }
+
+    #[test]
+    fn test_daemon_status_serialization() {
+        let status = DaemonStatus {
+            running: true,
+            pid: 12345,
+            capabilities_count: 5,
+            total_calls: 100,
+            total_evolutions: 3,
+            uptime_secs: 7200,
+            socket_path: "/tmp/sock".into(),
+            bin_dir: "/tmp/bin".into(),
+        };
+        let json = serde_json::to_string(&status).unwrap();
+        let decoded: DaemonStatus = serde_json::from_str(&json).unwrap();
+        assert!(decoded.running);
+        assert_eq!(decoded.pid, 12345);
+        assert_eq!(decoded.capabilities_count, 5);
+    }
+
+    #[test]
+    fn test_daemon_status_default_fields() {
+        let status = DaemonStatus {
+            running: false,
+            pid: 0,
+            capabilities_count: 0,
+            total_calls: 0,
+            total_evolutions: 0,
+            uptime_secs: 0,
+            socket_path: "".into(),
+            bin_dir: "".into(),
+        };
+        let json = serde_json::to_string(&status).unwrap();
+        assert!(json.contains("\"running\":false"));
+    }
+
+    #[test]
+    fn test_which_existing_command() {
+        let result = which("ls");
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_which_nonexistent_command() {
+        let result = which("nonexistent_cmd_12345");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_backend_type_variants() {
+        let cli = BackendType::Cli;
+        let http = BackendType::Http;
+        assert!(matches!(cli, BackendType::Cli));
+        assert!(matches!(http, BackendType::Http));
+    }
+
+    #[tokio::test]
+    async fn test_daemon_new() {
+        let config = DaemonConfig::default();
+        let bus = Arc::new(MessageBus::new());
+        let evolution = EvolutionEngine::new("/tmp/test_evo");
+        let platform = Platform::detect();
+        let daemon = Daemon::new(config, bus, evolution, None, platform);
+        assert_eq!(daemon.total_calls, 0);
+    }
+}

@@ -73,3 +73,85 @@ impl Capability for ComputeCapability {
             .build())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_msg(action: &str, a: f64, b: f64) -> Message {
+        Message::builder()
+            .from("test")
+            .to("compute")
+            .action(action)
+            .payload(serde_json::json!({"a": a, "b": b}))
+            .build()
+    }
+
+    #[tokio::test]
+    async fn test_compute_add() {
+        let cap = ComputeCapability;
+        let resp = cap.handle(&make_msg("add", 3.0, 4.0)).await.unwrap();
+        assert_eq!(resp.payload["result"], 7.0);
+        assert_eq!(resp.payload["operation"], "add");
+    }
+
+    #[tokio::test]
+    async fn test_compute_subtract() {
+        let cap = ComputeCapability;
+        let resp = cap.handle(&make_msg("subtract", 10.0, 3.0)).await.unwrap();
+        assert_eq!(resp.payload["result"], 7.0);
+    }
+
+    #[tokio::test]
+    async fn test_compute_multiply() {
+        let cap = ComputeCapability;
+        let resp = cap.handle(&make_msg("multiply", 6.0, 7.0)).await.unwrap();
+        assert_eq!(resp.payload["result"], 42.0);
+    }
+
+    #[tokio::test]
+    async fn test_compute_divide() {
+        let cap = ComputeCapability;
+        let resp = cap.handle(&make_msg("divide", 20.0, 4.0)).await.unwrap();
+        assert_eq!(resp.payload["result"], 5.0);
+    }
+
+    #[tokio::test]
+    async fn test_compute_divide_by_zero() {
+        let cap = ComputeCapability;
+        let result = cap.handle(&make_msg("divide", 10.0, 0.0)).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_compute_unsupported_action() {
+        let cap = ComputeCapability;
+        let msg = Message::builder()
+            .from("test")
+            .to("compute")
+            .action("power")
+            .payload(serde_json::json!({"a": 2.0, "b": 3.0}))
+            .build();
+        assert!(cap.handle(&msg).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_compute_missing_fields() {
+        let cap = ComputeCapability;
+        let msg = Message::builder()
+            .from("test")
+            .to("compute")
+            .action("add")
+            .payload(serde_json::json!({"a": 1.0}))
+            .build();
+        assert!(cap.handle(&msg).await.is_err());
+    }
+
+    #[test]
+    fn test_compute_metadata() {
+        let cap = ComputeCapability;
+        assert_eq!(cap.name(), "compute");
+        assert!(cap.is_native());
+        assert_eq!(cap.actions(), vec!["add", "subtract", "multiply", "divide"]);
+    }
+}

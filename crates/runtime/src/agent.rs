@@ -901,3 +901,101 @@ fn now_string() -> String {
         .map(|d| format!("{}", d.as_secs()))
         .unwrap_or_default()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_message_serialization() {
+        let msg = Message {
+            role: "user".into(),
+            content: "hello".into(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let decoded: Message = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.role, "user");
+        assert_eq!(decoded.content, "hello");
+    }
+
+    #[test]
+    fn test_agent_result_fields() {
+        let result = AgentResult {
+            task: "test task".into(),
+            success: true,
+            iterations: 3,
+            outputs: vec![],
+            context: HashMap::new(),
+            learned: true,
+            capabilities_created: vec!["new_cap".into()],
+            summary: "done".into(),
+        };
+        assert_eq!(result.task, "test task");
+        assert!(result.success);
+        assert_eq!(result.iterations, 3);
+        assert!(result.learned);
+        assert_eq!(result.capabilities_created, vec!["new_cap"]);
+    }
+
+    #[test]
+    fn test_extract_json_found() {
+        let text = r#"some text {"key": "value"} more"#;
+        let result = extract_json(text);
+        assert!(result.contains("\"key\""));
+    }
+
+    #[test]
+    fn test_extract_json_not_found() {
+        let text = "no json";
+        let result = extract_json(text);
+        assert_eq!(result, "no json");
+    }
+
+    #[test]
+    fn test_extract_json_nested() {
+        let text = r#"prefix {"a": {"b": 1}} suffix"#;
+        let result = extract_json(text);
+        assert!(result.contains("\"a\""));
+        assert!(result.contains("\"b\""));
+    }
+
+    #[test]
+    fn test_now_string_not_empty() {
+        let s = now_string();
+        assert!(!s.is_empty());
+    }
+
+    #[test]
+    fn test_llm_plan_deserialize() {
+        let json = r#"{"thinking":"test","steps":[],"done":false,"reply":"ok"}"#;
+        let plan: LlmPlan = serde_json::from_str(json).unwrap();
+        assert_eq!(plan.thinking, "test");
+        assert!(!plan.done);
+        assert_eq!(plan.reply, "ok");
+    }
+
+    #[test]
+    fn test_llm_plan_with_new_capability() {
+        let json = r#"{"thinking":"t","steps":[],"done":true,"reply":"r","new_capability":{"name":"cap"}}"#;
+        let plan: LlmPlan = serde_json::from_str(json).unwrap();
+        assert!(plan.new_capability.is_some());
+        assert!(plan.done);
+    }
+
+    #[test]
+    fn test_llm_plan_with_mutate() {
+        let json = r#"{"thinking":"t","steps":[],"done":false,"reply":"r","mutate":{"capability":"cap","action":"act"}}"#;
+        let plan: LlmPlan = serde_json::from_str(json).unwrap();
+        assert!(plan.mutate.is_some());
+        assert_eq!(plan.mutate.unwrap().capability, "cap");
+    }
+
+    #[test]
+    fn test_mutate_request_deserialize() {
+        let json = r#"{"capability":"my_cap","new_prompt":"better prompt"}"#;
+        let req: MutateRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.capability, "my_cap");
+        assert_eq!(req.new_prompt, Some("better prompt".into()));
+        assert!(req.action.is_none());
+    }
+}

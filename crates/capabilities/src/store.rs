@@ -136,3 +136,111 @@ impl Capability for StoreCapability {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_msg(action: &str, payload: serde_json::Value) -> Message {
+        Message::builder()
+            .from("test")
+            .to("store")
+            .action(action)
+            .payload(payload)
+            .build()
+    }
+
+    #[tokio::test]
+    async fn test_store_set_and_get() {
+        let cap = StoreCapability::new();
+        let set_msg = make_msg("set", serde_json::json!({"key": "k1", "value": 42}));
+        cap.handle(&set_msg).await.unwrap();
+        let get_msg = make_msg("get", serde_json::json!({"key": "k1"}));
+        let resp = cap.handle(&get_msg).await.unwrap();
+        assert_eq!(resp.payload["found"], true);
+        assert_eq!(resp.payload["value"], 42);
+    }
+
+    #[tokio::test]
+    async fn test_store_get_missing() {
+        let cap = StoreCapability::new();
+        let get_msg = make_msg("get", serde_json::json!({"key": "no_such"}));
+        let resp = cap.handle(&get_msg).await.unwrap();
+        assert_eq!(resp.payload["found"], false);
+    }
+
+    #[tokio::test]
+    async fn test_store_delete() {
+        let cap = StoreCapability::new();
+        cap.handle(&make_msg(
+            "set",
+            serde_json::json!({"key": "del", "value": "x"}),
+        ))
+        .await
+        .unwrap();
+        let resp = cap
+            .handle(&make_msg("delete", serde_json::json!({"key": "del"})))
+            .await
+            .unwrap();
+        assert_eq!(resp.payload["deleted"], true);
+        let get_resp = cap
+            .handle(&make_msg("get", serde_json::json!({"key": "del"})))
+            .await
+            .unwrap();
+        assert_eq!(get_resp.payload["found"], false);
+    }
+
+    #[tokio::test]
+    async fn test_store_delete_missing() {
+        let cap = StoreCapability::new();
+        let resp = cap
+            .handle(&make_msg("delete", serde_json::json!({"key": "ghost"})))
+            .await
+            .unwrap();
+        assert_eq!(resp.payload["deleted"], false);
+    }
+
+    #[tokio::test]
+    async fn test_store_list() {
+        let cap = StoreCapability::new();
+        cap.handle(&make_msg(
+            "set",
+            serde_json::json!({"key": "a", "value": 1}),
+        ))
+        .await
+        .unwrap();
+        cap.handle(&make_msg(
+            "set",
+            serde_json::json!({"key": "b", "value": 2}),
+        ))
+        .await
+        .unwrap();
+        let resp = cap
+            .handle(&make_msg("list", serde_json::json!({})))
+            .await
+            .unwrap();
+        let keys = resp.payload["keys"].as_array().unwrap();
+        assert_eq!(keys.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_store_unsupported_action() {
+        let cap = StoreCapability::new();
+        let msg = make_msg("clear", serde_json::json!({}));
+        assert!(cap.handle(&msg).await.is_err());
+    }
+
+    #[test]
+    fn test_store_metadata() {
+        let cap = StoreCapability::new();
+        assert_eq!(cap.name(), "store");
+        assert!(cap.is_native());
+        assert_eq!(cap.actions(), vec!["set", "get", "delete", "list"]);
+    }
+
+    #[test]
+    fn test_store_default() {
+        let cap = StoreCapability::default();
+        assert_eq!(cap.name(), "store");
+    }
+}

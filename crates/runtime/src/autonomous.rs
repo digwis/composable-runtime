@@ -603,3 +603,112 @@ fn extract_json(text: &str) -> String {
         _ => text.trim().to_string(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_environment_report_default() {
+        let report = EnvironmentReport::default();
+        assert_eq!(report.disk_usage_pct, 0.0);
+        assert!(report.recent_files.is_empty());
+    }
+
+    #[test]
+    fn test_goal_priority_display() {
+        assert_eq!(GoalPriority::Critical.to_string(), "Critical");
+        assert_eq!(GoalPriority::High.to_string(), "High");
+        assert_eq!(GoalPriority::Medium.to_string(), "Medium");
+        assert_eq!(GoalPriority::Low.to_string(), "Low");
+        assert_eq!(GoalPriority::Exploratory.to_string(), "Exploratory");
+    }
+
+    #[test]
+    fn test_goal_priority_serialization() {
+        let goal = AutonomousGoal {
+            description: "test".into(),
+            priority: GoalPriority::High,
+            suggested_capabilities: vec!["cap".into()],
+            reason: "because".into(),
+        };
+        let json = serde_json::to_string(&goal).unwrap();
+        let decoded: AutonomousGoal = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.priority, GoalPriority::High);
+        assert_eq!(decoded.description, "test");
+    }
+
+    #[test]
+    fn test_environment_report_serialization() {
+        let report = EnvironmentReport {
+            disk_usage_pct: 75.5,
+            cpu_usage_pct: 30.0,
+            memory_usage_pct: 60.0,
+            uptime_secs: 3600,
+            recent_files: vec!["file.rs".into()],
+            git_status: Some("M file.rs".into()),
+            running_processes: vec!["cargo".into()],
+            network_listening: vec![8080],
+            log_anomalies: vec!["error".into()],
+            timestamp: 1234567890,
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        let decoded: EnvironmentReport = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.disk_usage_pct, 75.5);
+        assert_eq!(decoded.network_listening, vec![8080]);
+    }
+
+    #[test]
+    fn test_autonomous_result_serialization() {
+        let result = AutonomousResult {
+            goal: AutonomousGoal {
+                description: "do thing".into(),
+                priority: GoalPriority::Medium,
+                suggested_capabilities: vec![],
+                reason: "test".into(),
+            },
+            success: true,
+            output: serde_json::json!({"ok": true}),
+            error: None,
+            elapsed_ms: 500,
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        let decoded: AutonomousResult = serde_json::from_str(&json).unwrap();
+        assert!(decoded.success);
+        assert_eq!(decoded.elapsed_ms, 500);
+    }
+
+    #[test]
+    fn test_extract_json_found() {
+        let text = r#"prefix {"key": "val"} suffix"#;
+        let result = extract_json(text);
+        assert!(result.contains("\"key\""));
+    }
+
+    #[test]
+    fn test_extract_json_not_found() {
+        let text = "no json here";
+        let result = extract_json(text);
+        assert_eq!(result, "no json here");
+    }
+
+    #[tokio::test]
+    async fn test_perceive_returns_report() {
+        let llm = Arc::new(LlmExecutor::new("dummy", "http://localhost"));
+        let bus = Arc::new(MessageBus::new());
+        let platform = Platform::detect();
+        let rt = AutonomousRuntime::new(llm, bus, platform);
+        let report = rt.perceive().await;
+        assert!(report.timestamp > 0);
+    }
+
+    #[tokio::test]
+    async fn test_autonomous_runtime_new() {
+        let llm = Arc::new(LlmExecutor::new("dummy", "http://localhost"));
+        let bus = Arc::new(MessageBus::new());
+        let platform = Platform::detect();
+        let rt = AutonomousRuntime::new(llm, bus, platform);
+        assert_eq!(rt.max_history, 100);
+        assert!(rt.history.is_empty());
+    }
+}

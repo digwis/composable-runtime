@@ -431,3 +431,166 @@ impl EvolutionOutcome {
         self.validation.passed
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_llm() -> Arc<LlmExecutor> {
+        Arc::new(LlmExecutor::new("dummy_key", "http://localhost"))
+    }
+
+    fn make_failure(task: &str, cap: &str, error: &str) -> FailureEvent {
+        FailureEvent {
+            task: task.into(),
+            capability: cap.into(),
+            action: "act".into(),
+            input: serde_json::json!({}),
+            error: error.into(),
+            timestamp: "2025-01-01T00:00:00".into(),
+        }
+    }
+
+    #[test]
+    fn test_failure_event_serialization() {
+        let event = make_failure("task1", "cap1", "timeout");
+        let json = serde_json::to_string(&event).unwrap();
+        let decoded: FailureEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.task, "task1");
+        assert_eq!(decoded.capability, "cap1");
+        assert_eq!(decoded.error, "timeout");
+    }
+
+    #[test]
+    fn test_capability_gap_serialization() {
+        let gap = CapabilityGap {
+            description: "missing feature".into(),
+            suggested_name: "new_cap".into(),
+            suggested_actions: vec!["act1".into()],
+            related_failures: vec![make_failure("t", "c", "e")],
+        };
+        let json = serde_json::to_string(&gap).unwrap();
+        let decoded: CapabilityGap = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.suggested_name, "new_cap");
+        assert_eq!(decoded.suggested_actions.len(), 1);
+    }
+
+    #[test]
+    fn test_record_failure() {
+        let mut driver = FailureDriver::new(make_llm());
+        assert!(!driver.has_failures());
+        driver.record_failure(make_failure("task1", "cap1", "err"));
+        assert!(driver.has_failures());
+        assert_eq!(driver.failures.len(), 1);
+    }
+
+    #[test]
+    fn test_record_multiple_failures() {
+        let mut driver = FailureDriver::new(make_llm());
+        driver.record_failure(make_failure("t1", "c1", "e1"));
+        driver.record_failure(make_failure("t2", "c2", "e2"));
+        driver.record_failure(make_failure("t3", "c3", "e3"));
+        assert_eq!(driver.failures.len(), 3);
+    }
+
+    #[test]
+    fn test_with_sandbox() {
+        let sandbox = Sandbox::with_defaults();
+        let driver = FailureDriver::with_sandbox(make_llm(), sandbox);
+        assert!(!driver.has_failures());
+    }
+
+    #[tokio::test]
+    async fn test_analyze_gaps_empty() {
+        let driver = FailureDriver::new(make_llm());
+        let gaps = driver.analyze_gaps().await;
+        assert!(gaps.is_empty());
+    }
+
+    #[test]
+    fn test_extract_json_array_found() {
+        let driver = FailureDriver::new(make_llm());
+        let text = r#"some text [{"a":1}] more text"#;
+        let result = driver.extract_json_array(text);
+        assert!(result.is_some());
+        assert!(result.unwrap().contains("\"a\":1"));
+    }
+
+    #[test]
+    fn test_extract_json_array_not_found() {
+        let driver = FailureDriver::new(make_llm());
+        let result = driver.extract_json_array("no brackets here");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_extract_json_object_found() {
+        let driver = FailureDriver::new(make_llm());
+        let text = r#"prefix {"key":"val"} suffix"#;
+        let result = driver.extract_json_object(text);
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_extract_json_object_not_found() {
+        let driver = FailureDriver::new(make_llm());
+        let result = driver.extract_json_object("no braces");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_fallback_input_simple() {
+        let driver = FailureDriver::new(make_llm());
+        let genome = CapabilityGenome::new("test_cap", "test");
+        let input = driver.generate_test_input_for(&genome);
+        assert!(input.is_object());
+    }
+
+    #[test]
+    fn test_fallback_input_empty_genome() {
+        let driver = FailureDriver::new(make_llm());
+        let genome = CapabilityGenome::new("empty", "no actions");
+        let input = driver.generate_test_input_for(&genome);
+        assert!(input.is_object());
+    }
+
+    #[test]
+    fn test_evolution_outcome_is_passing() {
+        let outcome = EvolutionOutcome {
+            gap: CapabilityGap {
+                description: "test".into(),
+                suggested_name: "cap".into(),
+                suggested_actions: vec![],
+                related_failures: vec![],
+            },
+            genome: CapabilityGenome::new("test", "test"),
+            validation: ValidationResult {
+                passed: true,
+                sandbox_result: None,
+                ab_test_result: None,
+                reason: "ok".into(),
+            },
+        };
+        assert!(outcome.is_passing());
+    }
+
+    #[test]
+    fn test_evolution_outcome_not_passing() {
+        let outcome = EvolutionOutcome {
+            gap: CapabilityGap {
+                description: "test".into(),
+                suggested_name: "cap".into(),
+                suggested_actions: vec![],
+                related_failures: vec![],
+            },
+            genome: CapabilityGenome::new("test", "test"),
+            validation: ValidationResult {
+                passed: false,
+                sandbox_result: None,
+                ab_test_result: None,
+                reason: "failed".into(),
+            },
+        };
+        assert!(!outcome.is_passing());
+    }
+}

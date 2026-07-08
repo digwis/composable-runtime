@@ -949,3 +949,102 @@ impl ToolsCallParams {
         self.arguments.get(key).and_then(|v| v.as_u64())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_params(name: &str, args: serde_json::Value) -> ToolsCallParams {
+        ToolsCallParams {
+            name: name.into(),
+            arguments: args,
+        }
+    }
+
+    #[test]
+    fn test_get_string_present() {
+        let params = make_params("tool", serde_json::json!({"key": "value"}));
+        assert_eq!(params.get_string("key").unwrap(), "value");
+    }
+
+    #[test]
+    fn test_get_string_missing() {
+        let params = make_params("tool", serde_json::json!({}));
+        assert!(params.get_string("no_such").is_err());
+    }
+
+    #[test]
+    fn test_get_string_wrong_type() {
+        let params = make_params("tool", serde_json::json!({"key": 123}));
+        assert!(params.get_string("key").is_err());
+    }
+
+    #[test]
+    fn test_get_bool_present() {
+        let params = make_params("tool", serde_json::json!({"flag": true}));
+        assert_eq!(params.get_bool("flag"), Some(true));
+    }
+
+    #[test]
+    fn test_get_bool_missing() {
+        let params = make_params("tool", serde_json::json!({}));
+        assert_eq!(params.get_bool("flag"), None);
+    }
+
+    #[test]
+    fn test_get_u32_present() {
+        let params = make_params("tool", serde_json::json!({"n": 42}));
+        assert_eq!(params.get_u32("n"), Some(42));
+    }
+
+    #[test]
+    fn test_get_u32_missing() {
+        let params = make_params("tool", serde_json::json!({}));
+        assert_eq!(params.get_u32("n"), None);
+    }
+
+    #[test]
+    fn test_get_u64_present() {
+        let params = make_params("tool", serde_json::json!({"n": 2147483647}));
+        assert_eq!(params.get_u64("n"), Some(2147483647));
+    }
+
+    #[test]
+    fn test_jsonrpc_request_deserialize() {
+        let json = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
+        let req: JsonRpcRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.method, "tools/list");
+        assert_eq!(req.id, serde_json::json!(1));
+    }
+
+    #[test]
+    fn test_jsonrpc_request_with_params() {
+        let json = r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"test"}}"#;
+        let req: JsonRpcRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.method, "tools/call");
+        assert!(req.params.is_some());
+    }
+
+    #[test]
+    fn test_jsonrpc_request_no_params() {
+        let json = r#"{"jsonrpc":"2.0","id":3,"method":"ping"}"#;
+        let req: JsonRpcRequest = serde_json::from_str(json).unwrap();
+        assert!(req.params.is_none());
+    }
+
+    #[test]
+    fn test_tools_call_params_deserialize() {
+        let json = r#"{"name":"my_tool","arguments":{"x":1}}"#;
+        let params: ToolsCallParams = serde_json::from_str(json).unwrap();
+        assert_eq!(params.name, "my_tool");
+        assert_eq!(params.arguments["x"], 1);
+    }
+
+    #[test]
+    fn test_tools_call_params_default_arguments() {
+        let json = r#"{"name":"my_tool"}"#;
+        let params: ToolsCallParams = serde_json::from_str(json).unwrap();
+        assert_eq!(params.name, "my_tool");
+        assert!(params.arguments.is_null());
+    }
+}

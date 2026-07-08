@@ -74,3 +74,69 @@ impl Capability for GreetCapability {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_msg(action: &str, payload: serde_json::Value) -> Message {
+        Message::builder()
+            .from("test")
+            .to("greet")
+            .action(action)
+            .payload(payload)
+            .build()
+    }
+
+    #[tokio::test]
+    async fn test_greet_hello() {
+        let cap = GreetCapability;
+        let msg = make_msg("hello", serde_json::json!({"name": "世界"}));
+        let resp = cap.handle(&msg).await.unwrap();
+        assert_eq!(resp.action, "hello.response");
+        assert_eq!(resp.payload["message"], "你好, 世界!");
+    }
+
+    #[tokio::test]
+    async fn test_greet_hello_custom_greeting() {
+        let cap = GreetCapability;
+        let msg = make_msg(
+            "hello",
+            serde_json::json!({"name": "Bob", "greeting": "Hello"}),
+        );
+        let resp = cap.handle(&msg).await.unwrap();
+        assert_eq!(resp.payload["message"], "Hello, Bob!");
+    }
+
+    #[tokio::test]
+    async fn test_greet_goodbye() {
+        let cap = GreetCapability;
+        let msg = make_msg("goodbye", serde_json::json!({"name": "Alice"}));
+        let resp = cap.handle(&msg).await.unwrap();
+        assert_eq!(resp.action, "goodbye.response");
+        assert!(resp.payload["message"].as_str().unwrap().contains("Alice"));
+    }
+
+    #[tokio::test]
+    async fn test_greet_unsupported_action() {
+        let cap = GreetCapability;
+        let msg = make_msg("unknown", serde_json::json!({"name": "test"}));
+        assert!(cap.handle(&msg).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_greet_missing_name() {
+        let cap = GreetCapability;
+        let msg = make_msg("hello", serde_json::json!({}));
+        assert!(cap.handle(&msg).await.is_err());
+    }
+
+    #[test]
+    fn test_greet_metadata() {
+        let cap = GreetCapability;
+        assert_eq!(cap.name(), "greet");
+        assert_eq!(cap.version(), "0.1.0");
+        assert!(cap.is_native());
+        assert_eq!(cap.actions(), vec!["hello", "goodbye"]);
+    }
+}
