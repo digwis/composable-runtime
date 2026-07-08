@@ -328,25 +328,46 @@ let caps = orchestrator.introspect().await;
 
 ```
 new/
-├── Cargo.toml                  # Workspace
+├── Cargo.toml                      # Workspace
 ├── crates/
-│   ├── runtime/                # 统一运行时
-│   │   └── src/
-│   │       ├── lib.rs
-│   │       ├── capability.rs   # Capability trait
-│   │       ├── message.rs      # Message 定义
-│   │       ├── message_bus.rs  # 消息总线
-│   │       ├── registry.rs     # 能力注册中心
-│   │       ├── orchestrator.rs # 编排引擎
-│   │       └── workflow.rs     # 工作流定义
-│   └── capabilities/           # 示例能力
+│   ├── runtime/                    # 统一运行时
+│   │   ├── src/
+│   │   │   ├── lib.rs              # 模块导出
+│   │   │   ├── capability.rs       # Capability trait
+│   │   │   ├── message.rs          # Message 定义
+│   │   │   ├── message_bus.rs      # 消息总线
+│   │   │   ├── registry.rs         # 能力注册中心
+│   │   │   ├── orchestrator.rs     # 编排引擎
+│   │   │   ├── workflow.rs         # 工作流定义
+│   │   │   ├── agent.rs            # AI Agent (Plan-Execute-Observe)
+│   │   │   ├── genome.rs           # 能力基因组 (DNA 驱动)
+│   │   │   ├── evolution.rs        # 进化引擎
+│   │   │   ├── auto_evolve.rs      # 自主进化循环
+│   │   │   ├── meta_evolve.rs      # 元进化 (变异执行器本身)
+│   │   │   ├── autonomous.rs       # 自主运行时 (感知→目标→执行)
+│   │   │   ├── ab_test.rs          # A/B 测试
+│   │   │   ├── failure_driver.rs   # 失败驱动进化
+│   │   │   ├── daemon.rs           # 系统级常驻服务
+│   │   │   ├── mcp_server.rs       # MCP Server (JSON-RPC)
+│   │   │   ├── memory.rs           # 持久化记忆
+│   │   │   ├── sandbox.rs          # 沙箱隔离
+│   │   │   └── platform.rs         # 平台检测
+│   │   └── tests/
+│   │       └── evolution_e2e.rs    # 端到端测试 (10 个)
+│   └── capabilities/               # 原生能力
 │       └── src/
-│           ├── greet.rs        # 问候能力
-│           ├── compute.rs      # 计算能力
-│           └── store.rs        # 存储能力
-├── bin/orchestrator/           # CLI 入口
-├── wit/                        # WIT 接口定义
-└── examples/                   # 示例工作流
+│           ├── greet.rs            # 问候能力
+│           ├── compute.rs          # 计算能力
+│           ├── store.rs            # 存储能力
+│           ├── fs.rs               # 文件系统能力
+│           ├── shell.rs            # Shell 命令能力
+│           ├── http.rs             # HTTP 请求能力
+│           ├── code.rs             # 代码分析能力
+│           └── web.rs              # Web 搜索能力
+├── bin/orchestrator/               # CLI 入口 (12 个子命令)
+├── wit/                            # WIT 接口定义
+├── .evolution/                     # 进化数据 (genomes.json)
+└── examples/                       # 示例工作流
     ├── greet_and_store.yaml
     ├── compute_pipeline.yaml
     ├── conditional_workflow.yaml
@@ -368,8 +389,17 @@ new/
 - [x] AI Agent LLM 驱动编排（Plan-Execute-Observe 循环，接入 Claude API）
 - [x] 自我进化与学习（工作流模板记忆 + 失败记录 + 强化学习）
 - [x] 能力自省（Introspection）
+- [x] 能力基因组（DNA 驱动，LLM/规则/组合/脚本/原生/自定义 6 种实现）
+- [x] 自主进化循环（自省→归因→变异→测试→选择）
+- [x] 持续进化 & 定向进化模式
+- [x] A/B 测试（变异体对比 + 自动晋升/回滚）
+- [x] 失败驱动进化（能力缺口发现 + 自动填补）
+- [x] 元进化（变异执行器本身，Python/Rust-WASM/Rust-Native）
+- [x] MCP Server（18 个原子 tool，stdio JSON-RPC）
+- [x] Daemon 模式（Unix socket + PATH 注入 + 后台进化）
+- [x] 自主运行时（环境感知→目标生成→主动执行）
+- [x] 沙箱隔离（超时 + 安全检查）
+- [x] 持久化记忆（磁盘存储工作流模板 + 失败记录）
 - [ ] WASM 组件加载（wasmtime）
-- [ ] 持久化记忆（磁盘/数据库存储工作流模板）
-- [ ] 能力热加载/卸载
+- [ ] 能力热加载/卸载（原生插件已支持，WASM 待实现）
 - [ ] 分布式消息总线（跨进程/跨节点）
-- [ ] 能力沙箱隔离

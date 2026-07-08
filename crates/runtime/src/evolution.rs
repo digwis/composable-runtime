@@ -498,3 +498,154 @@ fn atomic_write(path: &std::path::Path, content: &str) {
     }
     let _ = std::fs::rename(&tmp_path, path);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::genome::{ActionGene, ActionImpl, FitnessGene, LineageGene};
+
+    fn make_test_genome(name: &str) -> CapabilityGenome {
+        CapabilityGenome {
+            name: name.into(),
+            version: "0.1.0".into(),
+            description: "测试能力".into(),
+            actions: vec![ActionGene {
+                name: "act".into(),
+                description: "测试动作".into(),
+                input_schema: serde_json::json!({"type": "object"}),
+                implementation: ActionImpl::Rule {
+                    template: serde_json::json!({"result": "ok"}),
+                },
+            }],
+            fitness: FitnessGene::default(),
+            lineage: LineageGene::default(),
+            test_suite: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn test_evolution_register_and_get() {
+        let tmp = std::env::temp_dir().join(format!("evo_test_{}", uuid::Uuid::new_v4()));
+        let mut evo = EvolutionEngine::new(&tmp);
+        evo.register_genome(make_test_genome("cap_a"));
+        assert!(evo.genomes().contains_key("cap_a"));
+    }
+
+    #[test]
+    fn test_evolution_remove() {
+        let tmp = std::env::temp_dir().join(format!("evo_test_{}", uuid::Uuid::new_v4()));
+        let mut evo = EvolutionEngine::new(&tmp);
+        evo.register_genome(make_test_genome("cap_b"));
+        let removed = evo.remove_genome("cap_b");
+        assert!(removed.is_some());
+        assert!(!evo.genomes().contains_key("cap_b"));
+    }
+
+    #[test]
+    fn test_evolution_persistence() {
+        let tmp = std::env::temp_dir().join(format!("evo_test_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&tmp).ok();
+        {
+            let mut evo = EvolutionEngine::new(&tmp);
+            evo.register_genome(make_test_genome("persist_cap"));
+        }
+        let evo2 = EvolutionEngine::new(&tmp);
+        assert!(evo2.genomes().contains_key("persist_cap"));
+    }
+
+    #[test]
+    fn test_diversity_metrics_empty() {
+        let tmp = std::env::temp_dir().join(format!("evo_test_{}", uuid::Uuid::new_v4()));
+        let evo = EvolutionEngine::new(&tmp);
+        let (diversity, dupes) = evo.diversity_metrics();
+        assert_eq!(diversity, 1.0);
+        assert!(dupes.is_empty());
+    }
+
+    #[test]
+    fn test_diversity_metrics_with_duplicates() {
+        let tmp = std::env::temp_dir().join(format!("evo_test_{}", uuid::Uuid::new_v4()));
+        let mut evo = EvolutionEngine::new(&tmp);
+        evo.register_genome(make_test_genome("cargo_ops"));
+        evo.register_genome(make_test_genome("cargo_ops-v2"));
+        evo.register_genome(make_test_genome("cargo_ops-v3"));
+        evo.register_genome(make_test_genome("git_ops"));
+        let (diversity, dupes) = evo.diversity_metrics();
+        assert!(diversity < 1.0);
+        assert!(!dupes.is_empty());
+    }
+
+    #[test]
+    fn test_mutate_prompt_change() {
+        let tmp = std::env::temp_dir().join(format!("evo_test_{}", uuid::Uuid::new_v4()));
+        let mut evo = EvolutionEngine::new(&tmp);
+        let mut genome = make_test_genome("llm_cap");
+        genome.actions[0].implementation = ActionImpl::Llm {
+            prompt: "原始提示".into(),
+            model: "test-model".into(),
+            system: None,
+        };
+        evo.register_genome(genome);
+        let result = evo.mutate("llm_cap", Mutation::PromptChange {
+            action: "act".into(),
+            new_prompt: "新提示".into(),
+        });
+        assert!(result.is_ok());
+        let g = result.unwrap();
+        if let ActionImpl::Llm { prompt, .. } = &g.actions[0].implementation {
+            assert_eq!(prompt, "新提示");
+        } else {
+            panic!("应为 Llm 实现");
+        }
+        assert_eq!(g.lineage.generation, 2);
+    }
+
+    #[test]
+    fn test_mutate_description_change() {
+        let tmp = std::env::temp_dir().join(format!("evo_test_{}", uuid::Uuid::new_v4()));
+        let mut evo = EvolutionEngine::new(&tmp);
+        evo.register_genome(make_test_genome("desc_cap"));
+        let result = evo.mutate("desc_cap", Mutation::DescriptionChange {
+            new_description: "新描述".into(),
+        });
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().description, "新描述");
+    }
+
+    #[test]
+    fn test_mutate_nonexistent() {
+        let tmp = std::env::temp_dir().join(format!("evo_test_{}", uuid::Uuid::new_v4()));
+        let mut evo = EvolutionEngine::new(&tmp);
+        let result = evo.mutate("no_such_cap", Mutation::DescriptionChange {
+            new_description: "x".into(),
+        });
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_find_dependents() {
+        let tmp = std::env::temp_dir().join(format!("evo_test_{}", uuid::Uuid::new_v4()));
+        let mut evo = EvolutionEngine::new(&tmp);
+        evo.register_genome(make_test_genome("base_cap"));
+        let mut composite = make_test_genome("composite_cap");
+        composite.actions[0].implementation = ActionImpl::Composite {
+            steps: vec![crate::genome::CompositeStep {
+                name: "sub_step".into(),
+                capability: "base_cap".into(),
+                action: "act".into(),
+                input: serde_json::json!({}),
+            }],
+        };
+        evo.register_genome(composite);
+        let deps = evo.find_dependents("base_cap");
+        assert!(deps.contains(&"composite_cap".to_string()));
+    }
+
+    #[test]
+    fn test_mutation_description() {
+        assert!(Mutation::PromptChange { action: "a".into(), new_prompt: "p".into() }.description().contains("提示变更"));
+        assert!(Mutation::DescriptionChange { new_description: "d".into() }.description().contains("描述变更"));
+        assert!(Mutation::ActionAdd { action: make_test_genome("x").actions[0].clone() }.description().contains("新增动作"));
+        assert!(Mutation::ActionRemove { action_name: "a".into() }.description().contains("删除动作"));
+    }
+}

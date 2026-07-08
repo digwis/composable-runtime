@@ -896,7 +896,7 @@ impl LlmExecutor {
 
     /// OpenAI 兼容格式调用
     async fn execute_openai(&self, prompt: &str, model: &str, system: Option<&str>) -> Result<String, String> {
-        use serde::{Serialize, Deserialize};
+        use serde::Serialize;
 
         #[derive(Serialize)]
         struct OpenAiReq {

@@ -859,6 +859,7 @@ async fn run_continuous_task(
 
 #[derive(Debug, Deserialize)]
 struct JsonRpcRequest {
+    #[allow(dead_code)]
     jsonrpc: String,
     id: Value,
     method: String,

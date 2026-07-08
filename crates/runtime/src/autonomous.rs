@@ -69,6 +69,7 @@ pub struct AutonomousResult {
 pub struct AutonomousRuntime {
     llm: Arc<LlmExecutor>,
     bus: Arc<MessageBus>,
+    #[allow(dead_code)]
     platform: Platform,
     history: Vec<AutonomousResult>,
     max_history: usize,

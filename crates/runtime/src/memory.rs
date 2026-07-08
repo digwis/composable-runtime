@@ -586,3 +586,210 @@ fn now_secs() -> u64 {
         .map(|d| d.as_secs())
         .unwrap_or(0)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_short_term_memory_basic() {
+        let mut stm = ShortTermMemory::new();
+        stm.start_task("测试任务");
+        assert_eq!(stm.current_task, "测试任务");
+        assert_eq!(stm.iterations, 0);
+    }
+
+    #[test]
+    fn test_short_term_record_output() {
+        let mut stm = ShortTermMemory::new();
+        stm.record_step_output("step-1", serde_json::json!({"result": 42}));
+        assert_eq!(stm.step_outputs.len(), 1);
+        assert_eq!(stm.step_outputs["step-1"]["result"], 42);
+    }
+
+    #[test]
+    fn test_short_term_record_failure() {
+        let mut stm = ShortTermMemory::new();
+        stm.record_failure(TaskFailure {
+            step: "step-1".into(),
+            capability: "compute".into(),
+            action: "divide".into(),
+            error: "除零错误".into(),
+            retry_count: 3,
+        });
+        assert_eq!(stm.failure_count(), 1);
+        assert!(stm.has_repeated_failure("step-1", 1));
+        assert!(!stm.has_repeated_failure("step-1", 2));
+    }
+
+    #[test]
+    fn test_short_term_increment_iteration() {
+        let mut stm = ShortTermMemory::new();
+        stm.increment_iteration();
+        stm.increment_iteration();
+        assert_eq!(stm.iterations, 2);
+    }
+
+    #[test]
+    fn test_short_term_context() {
+        let mut stm = ShortTermMemory::new();
+        stm.start_task("计算任务");
+        stm.record_step_output("s1", serde_json::json!({}));
+        stm.record_failure(TaskFailure {
+            step: "s2".into(),
+            capability: "cap".into(),
+            action: "act".into(),
+            error: "失败".into(),
+            retry_count: 0,
+        });
+        let ctx = stm.context();
+        assert!(ctx.contains("计算任务"));
+        assert!(ctx.contains("1 个"));
+        assert!(ctx.contains("失败"));
+    }
+
+    #[test]
+    fn test_long_term_record_success() {
+        let mut ltm = LongTermMemory::default();
+        let steps = vec![TemplateStep {
+            name: "s1".into(),
+            capability: "compute".into(),
+            action: "add".into(),
+            input: serde_json::json!({"a": 1, "b": 2}),
+        }];
+        ltm.record_success("计算加法", &steps);
+        assert_eq!(ltm.workflow_templates.len(), 1);
+        assert_eq!(ltm.workflow_templates[0].success_count, 1);
+        assert_eq!(ltm.stats.total_successes, 1);
+    }
+
+    #[test]
+    fn test_long_term_record_success_repeat() {
+        let mut ltm = LongTermMemory::default();
+        let steps = vec![TemplateStep {
+            name: "s1".into(),
+            capability: "compute".into(),
+            action: "add".into(),
+            input: serde_json::json!({}),
+        }];
+        ltm.record_success("任务A", &steps);
+        ltm.record_success("任务A", &steps);
+        ltm.record_success("任务A", &steps);
+        assert_eq!(ltm.workflow_templates.len(), 1);
+        assert_eq!(ltm.workflow_templates[0].success_count, 3);
+    }
+
+    #[test]
+    fn test_long_term_record_failure() {
+        let mut ltm = LongTermMemory::default();
+        ltm.record_failure("任务B", "step-1", "超时");
+        assert_eq!(ltm.failed_attempts.len(), 1);
+        assert_eq!(ltm.stats.total_failures, 1);
+    }
+
+    #[test]
+    fn test_long_term_failure_cap_200() {
+        let mut ltm = LongTermMemory::default();
+        for i in 0..250 {
+            ltm.record_failure("task", &format!("step-{}", i), "err");
+        }
+        assert_eq!(ltm.failed_attempts.len(), 200);
+    }
+
+    #[test]
+    fn test_long_term_find_template_exact() {
+        let mut ltm = LongTermMemory::default();
+        let steps = vec![TemplateStep {
+            name: "s1".into(),
+            capability: "cap".into(),
+            action: "act".into(),
+            input: serde_json::json!({}),
+        }];
+        ltm.record_success("计算加法", &steps);
+        let found = ltm.find_template("计算加法");
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().task, "计算加法");
+    }
+
+    #[test]
+    fn test_long_term_find_template_fuzzy() {
+        let mut ltm = LongTermMemory::default();
+        let steps = vec![TemplateStep {
+            name: "s1".into(),
+            capability: "cap".into(),
+            action: "act".into(),
+            input: serde_json::json!({}),
+        }];
+        ltm.record_success("计算加法", &steps);
+        let found = ltm.find_template("计算");
+        assert!(found.is_some());
+    }
+
+    #[test]
+    fn test_long_term_capability_stats() {
+        let mut ltm = LongTermMemory::default();
+        ltm.record_capability_call("compute", true, 50);
+        ltm.record_capability_call("compute", true, 70);
+        ltm.record_capability_call("compute", false, 100);
+        let stat = &ltm.capability_stats["compute"];
+        assert_eq!(stat.total_calls, 3);
+        assert_eq!(stat.successes, 2);
+        assert_eq!(stat.failures, 1);
+        assert!((stat.success_rate() - 2.0/3.0).abs() < 0.01);
+        assert!(stat.avg_latency_ms > 50.0);
+    }
+
+    #[test]
+    fn test_long_term_weak_capabilities() {
+        let mut ltm = LongTermMemory::default();
+        for _ in 0..10 {
+            ltm.record_capability_call("weak_cap", false, 100);
+        }
+        for _ in 0..10 {
+            ltm.record_capability_call("strong_cap", true, 50);
+        }
+        let weak = ltm.weak_capabilities(5);
+        assert!(weak.iter().any(|(n, _)| n == "weak_cap"));
+        assert!(!weak.iter().any(|(n, _)| n == "strong_cap"));
+    }
+
+    #[test]
+    fn test_capability_usage_stat_success_rate() {
+        let stat = CapabilityUsageStat {
+            total_calls: 0,
+            successes: 0,
+            failures: 0,
+            avg_latency_ms: 0.0,
+            last_used: "".into(),
+        };
+        assert_eq!(stat.success_rate(), 0.0);
+
+        let stat2 = CapabilityUsageStat {
+            total_calls: 10,
+            successes: 7,
+            failures: 3,
+            avg_latency_ms: 50.0,
+            last_used: "".into(),
+        };
+        assert!((stat2.success_rate() - 0.7).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_persistent_memory_load_save() {
+        let tmp = std::env::temp_dir().join(format!("mem_test_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&tmp).ok();
+        {
+            let mut mem = PersistentMemory::load(&tmp);
+            mem.record_success("测试任务", &[TemplateStep {
+                name: "s1".into(),
+                capability: "cap".into(),
+                action: "act".into(),
+                input: serde_json::json!({}),
+            }]);
+            mem.save(&tmp);
+        }
+        let mem2 = PersistentMemory::load(&tmp);
+        assert_eq!(mem2.workflow_templates.len(), 1);
+        assert_eq!(mem2.workflow_templates[0].task, "测试任务");
+    }
+}

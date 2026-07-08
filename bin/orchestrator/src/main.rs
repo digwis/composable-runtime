@@ -242,6 +242,22 @@ fn build_registry() -> MessageBus {
         .build()
 }
 
+async fn register_genomes(agent: &Agent) {
+    if let Some(evo) = agent.evolution() {
+        if let Some(llm) = agent.llm_executor() {
+            let bus = agent.orchestrator().bus().clone();
+            let genomes: Vec<_> = evo.genomes().values().cloned().collect();
+            for genome in &genomes {
+                if genome.actions.is_empty() { continue; }
+                let cap = runtime::ScriptedCapability::from_genome(genome.clone())
+                    .with_llm(llm.clone())
+                    .with_bus(bus.clone());
+                agent.orchestrator().bus().register(std::sync::Arc::new(cap)).await;
+            }
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
@@ -452,20 +468,7 @@ async fn main() -> anyhow::Result<()> {
                 .with_base_url(base_url)
                 .with_evolution();
 
-            // 注册已有基因组到总线
-            if let Some(evo) = agent.evolution() {
-                if let Some(llm) = agent.llm_executor() {
-                    let bus = agent.orchestrator().bus().clone();
-                    let genomes: Vec<_> = evo.genomes().values().cloned().collect();
-                    for genome in &genomes {
-                        if genome.actions.is_empty() { continue; }
-                        let cap = runtime::ScriptedCapability::from_genome(genome.clone())
-                            .with_llm(llm.clone())
-                            .with_bus(bus.clone());
-                        agent.orchestrator().bus().register(std::sync::Arc::new(cap)).await;
-                    }
-                }
-            }
+            register_genomes(&agent).await;
 
             for round in 1..=rounds {
                 println!("\n🧬 ═══ 自主进化 第 {} 轮 ═══", round);
@@ -522,20 +525,7 @@ async fn main() -> anyhow::Result<()> {
                 .with_base_url(base_url)
                 .with_evolution();
 
-            // 注册已有基因组到总线
-            if let Some(evo) = agent.evolution() {
-                if let Some(llm) = agent.llm_executor() {
-                    let bus = agent.orchestrator().bus().clone();
-                    let genomes: Vec<_> = evo.genomes().values().cloned().collect();
-                    for genome in &genomes {
-                        if genome.actions.is_empty() { continue; }
-                        let cap = runtime::ScriptedCapability::from_genome(genome.clone())
-                            .with_llm(llm.clone())
-                            .with_bus(bus.clone());
-                        agent.orchestrator().bus().register(std::sync::Arc::new(cap)).await;
-                    }
-                }
-            }
+            register_genomes(&agent).await;
 
             let llm = agent.llm_executor().cloned();
             let bus = agent.orchestrator().bus().clone();
@@ -571,20 +561,7 @@ async fn main() -> anyhow::Result<()> {
                 .with_base_url(base_url)
                 .with_evolution();
 
-            // 注册已有基因组到总线
-            if let Some(evo) = agent.evolution() {
-                if let Some(llm) = agent.llm_executor() {
-                    let bus = agent.orchestrator().bus().clone();
-                    let genomes: Vec<_> = evo.genomes().values().cloned().collect();
-                    for genome in &genomes {
-                        if genome.actions.is_empty() { continue; }
-                        let cap = runtime::ScriptedCapability::from_genome(genome.clone())
-                            .with_llm(llm.clone())
-                            .with_bus(bus.clone());
-                        agent.orchestrator().bus().register(std::sync::Arc::new(cap)).await;
-                    }
-                }
-            }
+            register_genomes(&agent).await;
 
             let llm = agent.llm_executor().cloned();
             let bus = agent.orchestrator().bus().clone();

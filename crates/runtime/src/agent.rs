@@ -87,6 +87,7 @@ struct MutateRequest {
     action: Option<String>,
     new_prompt: Option<String>,
     new_description: Option<String>,
+    #[allow(dead_code)]
     new_model: Option<String>,
 }
 
@@ -540,6 +541,7 @@ impl Agent {
     }
 
     /// 构建记忆上下文
+    #[allow(dead_code)]
     fn build_memory_context(&self, task: &str) -> String {
         if let Some(template) = self.memory.find_template(task) {
             format!(

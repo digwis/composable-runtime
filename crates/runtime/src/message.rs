@@ -95,3 +95,93 @@ impl MessageBuilder {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_message_builder_basic() {
+        let msg = Message::builder()
+            .from("cap_a")
+            .to("cap_b")
+            .action("hello")
+            .payload(serde_json::json!({"name": "test"}))
+            .build();
+
+        assert_eq!(msg.from.as_deref(), Some("cap_a"));
+        assert_eq!(msg.to, "cap_b");
+        assert_eq!(msg.action, "hello");
+        assert_eq!(msg.payload["name"], "test");
+        assert!(!msg.id.is_empty());
+    }
+
+    #[test]
+    fn test_message_builder_defaults() {
+        let msg = Message::builder().build();
+        assert!(msg.from.is_none());
+        assert_eq!(msg.to, "");
+        assert_eq!(msg.action, "");
+        assert_eq!(msg.payload, serde_json::Value::Null);
+    }
+
+    #[test]
+    fn test_message_metadata() {
+        let msg = Message::builder()
+            .to("cap")
+            .action("act")
+            .metadata("key1", "val1")
+            .metadata("key2", "val2")
+            .build();
+        assert_eq!(msg.metadata.get("key1"), Some(&"val1".to_string()));
+        assert_eq!(msg.metadata.get("key2"), Some(&"val2".to_string()));
+    }
+
+    #[test]
+    fn test_message_payload_as() {
+        #[derive(Deserialize)]
+        struct Data { name: String, age: u32 }
+        let msg = Message::builder()
+            .payload(serde_json::json!({"name": "alice", "age": 30}))
+            .build();
+        let data: Data = msg.payload_as().unwrap();
+        assert_eq!(data.name, "alice");
+        assert_eq!(data.age, 30);
+    }
+
+    #[test]
+    fn test_message_payload_as_invalid() {
+        let msg = Message::builder()
+            .payload(serde_json::json!({"name": "alice"}))
+            .build();
+        #[derive(Deserialize)]
+        struct NeedAge { #[allow(dead_code)] age: u32 }
+        let result: Result<NeedAge, _> = msg.payload_as();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_message_serialization() {
+        let msg = Message::builder()
+            .from("a")
+            .to("b")
+            .action("act")
+            .payload(serde_json::json!({"x": 1}))
+            .build();
+        let json = serde_json::to_string(&msg).unwrap();
+        let decoded: Message = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.to, "b");
+        assert_eq!(decoded.action, "act");
+        assert_eq!(decoded.payload["x"], 1);
+    }
+
+    #[test]
+    fn test_message_error_display() {
+        let err = MessageError::UnsupportedAction {
+            capability: "greet".into(),
+            action: "dance".into(),
+        };
+        assert!(err.to_string().contains("greet"));
+        assert!(err.to_string().contains("dance"));
+    }
+}

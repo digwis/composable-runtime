@@ -563,7 +563,7 @@ impl ExecutorRegistry {
         type_name: &str,
         code: &str,
         input_str: &str,
-        timeout_secs: u64,
+        _timeout_secs: u64,
     ) -> Result<serde_json::Value, String> {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
@@ -780,6 +780,7 @@ pub struct NativePlugin {
     /// 已加载的动态库
     library: Library,
     /// 动态库文件路径
+    #[allow(dead_code)]
     lib_path: std::path::PathBuf,
 }
 
@@ -895,6 +896,7 @@ pub struct MetaEvolver {
     /// LLM 执行器
     llm: Arc<LlmExecutor>,
     /// 消息总线
+    #[allow(dead_code)]
     bus: Arc<MessageBus>,
     /// 平台信息
     platform: Platform,

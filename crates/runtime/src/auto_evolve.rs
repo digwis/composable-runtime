@@ -339,7 +339,7 @@ impl AutoEvolver {
                 );
 
                 // P5: 自动合并 — 淘汰重复组中适应度最低的版本（保留最高）
-                for (base, versions) in &report.duplicate_groups {
+                for (_base, versions) in &report.duplicate_groups {
                     if versions.len() <= 1 {
                         continue;
                     }
@@ -1467,7 +1467,6 @@ mutation_type 必须是以下之一，且只携带对应字段：
         }
 
         let action_name = genome.actions[0].name.clone();
-        let cap_desc = genome.description.clone();
 
         // 为操作类能力构造真实场景输入
         let real_input = match Self::build_real_test_input(capability_name, &action_name) {

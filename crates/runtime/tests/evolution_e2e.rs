@@ -111,7 +111,7 @@ async fn test_04_rust_wasm_executor() {
     let tmp_dir = std::env::temp_dir().join(format!("evo_test_{}", uuid::Uuid::new_v4()));
     let registry = ExecutorRegistry::new(&tmp_dir);
 
-    let code = r#"
+    let _code = r#"
     // 简单回显：解析输入并返回
     let parsed: serde_json::Value = serde_json::from_str(__input).unwrap_or(serde_json::json!({}));
     println!("{}", serde_json::json!({
@@ -192,7 +192,7 @@ async fn test_05_rust_native_executor() {
     let code2 = r#"
     __output = format!("{{\"success\": true, \"lang\": \"native_v2\", \"input_len\": {}}}", __input.len());
 "#;
-    registry.mutate_executor("echo_native", code2.to_string(), None).await;
+    let _ = registry.mutate_executor("echo_native", code2.to_string(), None).await;
 
     let result2 = registry.execute(
         "echo_native",
@@ -265,6 +265,7 @@ async fn test_07_scripted_capability_custom_executor() {
         }],
         fitness: Default::default(),
         lineage: Default::default(),
+        test_suite: Vec::new(),
     };
 
     let bus = Arc::new(MessageBus::new());

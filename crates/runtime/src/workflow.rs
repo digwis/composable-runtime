@@ -195,3 +195,160 @@ impl Step {
         self
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_step_new() {
+        let step = Step::new("s1", "compute", "add", serde_json::json!({"a": 1, "b": 2}));
+        assert_eq!(step.name, "s1");
+        assert_eq!(step.capability, "compute");
+        assert_eq!(step.action, "add");
+        assert_eq!(step.input["a"], 1);
+        assert!(step.condition.is_none());
+        assert!(step.retry.is_none());
+        assert!(step.timeout_ms.is_none());
+        assert!(matches!(step.on_error, ErrorStrategy::Stop));
+    }
+
+    #[test]
+    fn test_step_with_condition() {
+        let step = Step::new("s1", "compute", "add", serde_json::json!({}))
+            .with_condition("step-1.result != null");
+        assert!(step.condition.is_some());
+    }
+
+    #[test]
+    fn test_step_with_retry() {
+        let step = Step::new("s1", "compute", "add", serde_json::json!({}))
+            .with_retry(RetryPolicy {
+                max_retries: 5,
+                delay_ms: 200,
+                backoff_multiplier: 3.0,
+            });
+        let retry = step.retry.unwrap();
+        assert_eq!(retry.max_retries, 5);
+        assert_eq!(retry.delay_ms, 200);
+        assert_eq!(retry.backoff_multiplier, 3.0);
+    }
+
+    #[test]
+    fn test_step_with_timeout() {
+        let step = Step::new("s1", "compute", "add", serde_json::json!({}))
+            .with_timeout(5000);
+        assert_eq!(step.timeout_ms, Some(5000));
+    }
+
+    #[test]
+    fn test_step_on_error_continue() {
+        let step = Step::new("s1", "compute", "add", serde_json::json!({}))
+            .on_error(ErrorStrategy::Continue);
+        assert!(matches!(step.on_error, ErrorStrategy::Continue));
+    }
+
+    #[test]
+    fn test_parallel_group_new() {
+        let group = ParallelGroup::new("grp", vec![
+            Step::new("a", "compute", "add", serde_json::json!({})),
+            Step::new("b", "greet", "hello", serde_json::json!({})),
+        ]);
+        assert_eq!(group.name, "grp");
+        assert_eq!(group.parallel.len(), 2);
+    }
+
+    #[test]
+    fn test_step_entry_name() {
+        let single = StepEntry::Single(Step::new("s1", "cap", "act", serde_json::json!({})));
+        assert_eq!(single.name(), "s1");
+
+        let parallel = StepEntry::Parallel(ParallelGroup::new("grp", vec![]));
+        assert_eq!(parallel.name(), "grp");
+    }
+
+    #[test]
+    fn test_workflow_from_yaml() {
+        let yaml = r#"
+name: test-wf
+description: 测试工作流
+steps:
+  - name: step-1
+    capability: greet
+    action: hello
+    input:
+      name: "世界"
+"#;
+        let wf = Workflow::from_yaml(yaml).unwrap();
+        assert_eq!(wf.name, "test-wf");
+        assert_eq!(wf.description, "测试工作流");
+        assert_eq!(wf.steps.len(), 1);
+    }
+
+    #[test]
+    fn test_workflow_from_yaml_with_parallel() {
+        let yaml = r#"
+name: parallel-wf
+steps:
+  - name: grp
+    parallel:
+      - name: a
+        capability: compute
+        action: add
+        input: { a: 1, b: 2 }
+      - name: b
+        capability: greet
+        action: hello
+        input: { name: "x" }
+"#;
+        let wf = Workflow::from_yaml(yaml).unwrap();
+        assert_eq!(wf.steps.len(), 1);
+        match &wf.steps[0] {
+            StepEntry::Parallel(g) => {
+                assert_eq!(g.name, "grp");
+                assert_eq!(g.parallel.len(), 2);
+            }
+            _ => panic!("应为并行组"),
+        }
+    }
+
+    #[test]
+    fn test_workflow_from_yaml_with_retry() {
+        let yaml = r#"
+name: retry-wf
+steps:
+  - name: risky
+    capability: compute
+    action: divide
+    input: { a: 10, b: 0 }
+    retry:
+      max_retries: 3
+      delay_ms: 100
+      backoff_multiplier: 2.0
+    on_error: continue
+"#;
+        let wf = Workflow::from_yaml(yaml).unwrap();
+        match &wf.steps[0] {
+            StepEntry::Single(s) => {
+                let retry = s.retry.as_ref().unwrap();
+                assert_eq!(retry.max_retries, 3);
+                assert!(matches!(s.on_error, ErrorStrategy::Continue));
+            }
+            _ => panic!("应为单步"),
+        }
+    }
+
+    #[test]
+    fn test_retry_policy_default() {
+        let policy = RetryPolicy::default();
+        assert_eq!(policy.max_retries, 3);
+        assert_eq!(policy.delay_ms, 100);
+        assert_eq!(policy.backoff_multiplier, 2.0);
+    }
+
+    #[test]
+    fn test_workflow_from_invalid_yaml() {
+        let result = Workflow::from_yaml("not valid yaml: {{{");
+        assert!(result.is_err());
+    }
+}
