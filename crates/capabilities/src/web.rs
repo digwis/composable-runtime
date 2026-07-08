@@ -1,8 +1,8 @@
 use runtime::{Capability, Message, MessageError, MessageResult};
 use serde::Deserialize;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use tokio::process::Command;
+use tokio::sync::RwLock;
 
 /// Web 服务器能力 — 启动/停止静态文件 HTTP 服务
 ///
@@ -118,10 +118,7 @@ impl Capability for WebCapability {
                 if let Some(pid) = pid {
                     #[cfg(unix)]
                     {
-                        let _ = Command::new("kill")
-                            .arg(pid.to_string())
-                            .output()
-                            .await;
+                        let _ = Command::new("kill").arg(pid.to_string()).output().await;
                     }
                     #[cfg(not(unix))]
                     {

@@ -51,8 +51,6 @@ mod futures_lite {
     pub fn block_on<F: std::future::Future>(f: F) -> F::Output {
         // 在同步上下文中执行 future
         // 使用 tokio 的 current_thread runtime
-        tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(f)
-        })
+        tokio::task::block_in_place(|| tokio::runtime::Handle::current().block_on(f))
     }
 }

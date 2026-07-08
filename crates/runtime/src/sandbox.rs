@@ -30,13 +30,19 @@ impl Default for SandboxConfig {
             timeout: Duration::from_secs(30),
             max_memory_mb: Some(256),
             env_whitelist: vec![
-                "PATH".into(), "HOME".into(), "TMPDIR".into(),
-                "LANG".into(), "LC_ALL".into(),
+                "PATH".into(),
+                "HOME".into(),
+                "TMPDIR".into(),
+                "LANG".into(),
+                "LC_ALL".into(),
                 "__EXECUTOR_INPUT__".into(),
             ],
             forbidden_commands: vec![
-                "rm -rf /".into(), "mkfs".into(), "dd if=".into(),
-                "shutdown".into(), "reboot".into(),
+                "rm -rf /".into(),
+                "mkfs".into(),
+                "dd if=".into(),
+                "shutdown".into(),
+                "reboot".into(),
             ],
         }
     }
@@ -76,11 +82,7 @@ impl Sandbox {
     }
 
     /// 在沙箱中执行 Python 脚本
-    pub async fn execute_python(
-        &self,
-        code: &str,
-        input: &serde_json::Value,
-    ) -> SandboxResult {
+    pub async fn execute_python(&self, code: &str, input: &serde_json::Value) -> SandboxResult {
         // 安全检查
         let safety_errors = self.check_safety(code);
         if !safety_errors.is_empty() {
@@ -131,10 +133,8 @@ impl Sandbox {
             }
         };
 
-        let output = match tokio::time::timeout(
-            self.config.timeout,
-            child.wait_with_output(),
-        ).await {
+        let output = match tokio::time::timeout(self.config.timeout, child.wait_with_output()).await
+        {
             Ok(Ok(o)) => o,
             Ok(Err(e)) => {
                 return SandboxResult {
@@ -168,7 +168,7 @@ impl Sandbox {
         // 验证输出是否为有效 JSON 且包含 success 字段
         let mut validation_errors = vec![];
         let success = if exit_code == Some(0) {
-            match serde_json::from_str::<serde_json::Value>(&stdout.trim()) {
+            match serde_json::from_str::<serde_json::Value>(stdout.trim()) {
                 Ok(v) => {
                     if let Some(s) = v.get("success").and_then(|s| s.as_bool()) {
                         s
@@ -213,7 +213,10 @@ impl Sandbox {
     }
 
     /// 生成对抗性测试输入
-    pub fn generate_adversarial_inputs(&self, schema: &serde_json::Value) -> Vec<serde_json::Value> {
+    pub fn generate_adversarial_inputs(
+        &self,
+        schema: &serde_json::Value,
+    ) -> Vec<serde_json::Value> {
         let mut inputs = vec![];
 
         // 空输入

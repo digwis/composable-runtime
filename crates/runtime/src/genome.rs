@@ -200,7 +200,9 @@ impl FitnessGene {
 
         // P2-2: 计算覆盖范围（基于调用次数的 log 缩放）
         self.coverage_score = (self.call_count as f64).ln_1p() / 10.0;
-        if self.coverage_score > 1.0 { self.coverage_score = 1.0; }
+        if self.coverage_score > 1.0 {
+            self.coverage_score = 1.0;
+        }
 
         // P2-2: 综合评分 = 成功率 * 速度因子 * (0.5 + 0.3*输出质量 + 0.2*覆盖范围) * (1 - 0.1*依赖复杂度)
         let speed_factor = 1.0 / (1.0 + self.avg_latency_ms / 1000.0);
@@ -251,17 +253,19 @@ impl FitnessGene {
             let complexity = match &action.implementation {
                 ActionImpl::Script { code, language, .. } => {
                     if language == "python" {
-                        let import_count = code.lines()
-                            .filter(|l| l.trim_start().starts_with("import ") || l.trim_start().starts_with("from "))
+                        let import_count = code
+                            .lines()
+                            .filter(|l| {
+                                l.trim_start().starts_with("import ")
+                                    || l.trim_start().starts_with("from ")
+                            })
                             .count();
                         (import_count as f64 / 10.0).min(1.0)
                     } else {
                         0.5
                     }
                 }
-                ActionImpl::Composite { steps } => {
-                    (steps.len() as f64 / 5.0).min(1.0)
-                }
+                ActionImpl::Composite { steps } => (steps.len() as f64 / 5.0).min(1.0),
                 ActionImpl::Llm { .. } => 0.3,
                 ActionImpl::Native { .. } => 0.0,
                 ActionImpl::Rule { .. } => 0.0,
@@ -363,9 +367,11 @@ impl CapabilityGenome {
     pub fn add_test_case(&mut self, input: serde_json::Value, expect_success: bool, source: &str) {
         // 避免重复（简单去重：input 序列化相同）
         let input_str = serde_json::to_string(&input).unwrap_or_default();
-        if self.test_suite.iter().any(|t| {
-            serde_json::to_string(&t.input).unwrap_or_default() == input_str
-        }) {
+        if self
+            .test_suite
+            .iter()
+            .any(|t| serde_json::to_string(&t.input).unwrap_or_default() == input_str)
+        {
             return;
         }
         // 最多保留 20 个测试用例
@@ -382,7 +388,10 @@ impl CapabilityGenome {
 
     /// 获取动作描述（给 AI 看）
     pub fn describe(&self) -> String {
-        let mut desc = format!("  - {} (v{}): {}\n", self.name, self.version, self.description);
+        let mut desc = format!(
+            "  - {} (v{}): {}\n",
+            self.name, self.version, self.description
+        );
         for action in &self.actions {
             desc.push_str(&format!("    · {}: {}\n", action.name, action.description));
         }
@@ -390,7 +399,11 @@ impl CapabilityGenome {
     }
 
     /// 记录变异
-    pub fn record_mutation(&mut self, mutation_type: impl Into<String>, description: impl Into<String>) {
+    pub fn record_mutation(
+        &mut self,
+        mutation_type: impl Into<String>,
+        description: impl Into<String>,
+    ) {
         self.lineage.mutations.push(MutationRecord {
             mutation_type: mutation_type.into(),
             description: description.into(),
@@ -452,7 +465,10 @@ impl ScriptedCapability {
     }
 
     /// 绑定执行器注册表（使 Custom 实现可执行 — 元进化产物）
-    pub fn with_executor_registry(mut self, registry: Arc<crate::meta_evolve::ExecutorRegistry>) -> Self {
+    pub fn with_executor_registry(
+        mut self,
+        registry: Arc<crate::meta_evolve::ExecutorRegistry>,
+    ) -> Self {
         self.executor_registry = Some(registry);
         self
     }
@@ -473,27 +489,43 @@ impl ScriptedCapability {
     }
 
     /// 执行动作
-    async fn execute_action(&self, action: &str, input: &serde_json::Value) -> Result<serde_json::Value, String> {
-        let action_gene = self.genome.actions.iter().find(|a| a.name == action)
+    async fn execute_action(
+        &self,
+        action: &str,
+        input: &serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        let action_gene = self
+            .genome
+            .actions
+            .iter()
+            .find(|a| a.name == action)
             .ok_or_else(|| format!("动作 '{}' 不存在于能力 '{}'", action, self.genome.name))?;
 
         match &action_gene.implementation {
-            ActionImpl::Llm { prompt, model, system } => {
-                let client = self.llm_client.as_ref()
+            ActionImpl::Llm {
+                prompt,
+                model,
+                system,
+            } => {
+                let client = self
+                    .llm_client
+                    .as_ref()
                     .ok_or_else(|| "LLM 客户端未配置".to_string())?;
-                
+
                 let rendered = render_template(prompt, input);
                 let system_prompt = system.as_ref().map(|s| render_template(s, input));
-                
-                let result = client.execute(&rendered, model, system_prompt.as_deref()).await;
+
+                let result = client
+                    .execute(&rendered, model, system_prompt.as_deref())
+                    .await;
                 result.map(|text| serde_json::json!({"result": text}))
             }
-            ActionImpl::Rule { template } => {
-                Ok(render_template_value(template, input))
-            }
+            ActionImpl::Rule { template } => Ok(render_template_value(template, input)),
             ActionImpl::Composite { steps } => {
                 // 组合调用：按步骤编排，每步调用其他能力
-                let bus = self.bus.as_ref()
+                let bus = self
+                    .bus
+                    .as_ref()
                     .ok_or_else(|| "组合能力需要消息总线绑定".to_string())?;
 
                 let mut step_results = serde_json::Map::new();
@@ -511,14 +543,16 @@ impl ScriptedCapability {
                         .build();
 
                     let resp = bus.send(msg).await.map_err(|e| {
-                        format!("组合步骤 '{}' 调用 {}.{} 失败: {}",
-                            step.name, step.capability, step.action, e)
+                        format!(
+                            "组合步骤 '{}' 调用 {}.{} 失败: {}",
+                            step.name, step.capability, step.action, e
+                        )
                     })?;
 
                     // 将步骤结果存入上下文，供后续步骤引用
-                    context.as_object_mut().map(|obj| {
+                    if let Some(obj) = context.as_object_mut() {
                         obj.insert(step.name.clone(), resp.payload.clone());
-                    });
+                    }
                     step_results.insert(step.name.clone(), resp.payload);
                 }
 
@@ -526,7 +560,9 @@ impl ScriptedCapability {
             }
             ActionImpl::Native { capability, action } => {
                 // 委托给原生能力：通过消息总线转发
-                let bus = self.bus.as_ref()
+                let bus = self
+                    .bus
+                    .as_ref()
                     .ok_or_else(|| "原生委托需要消息总线绑定".to_string())?;
 
                 let msg = Message::builder()
@@ -536,13 +572,18 @@ impl ScriptedCapability {
                     .payload(input.clone())
                     .build();
 
-                let resp = bus.send(msg).await.map_err(|e| {
-                    format!("原生委托 {}.{} 失败: {}", capability, action, e)
-                })?;
+                let resp = bus
+                    .send(msg)
+                    .await
+                    .map_err(|e| format!("原生委托 {}.{} 失败: {}", capability, action, e))?;
 
                 Ok(resp.payload)
             }
-            ActionImpl::Script { language, code, timeout_secs } => {
+            ActionImpl::Script {
+                language,
+                code,
+                timeout_secs,
+            } => {
                 // 脚本能力：AI 编写的代码持久化在基因组中
                 // 模板渲染后写入临时文件执行
                 let rendered_code = render_template(code, input);
@@ -575,13 +616,15 @@ impl ScriptedCapability {
                 cmd.stdout(std::process::Stdio::piped());
                 cmd.stderr(std::process::Stdio::piped());
 
-                let child = cmd.spawn()
+                let child = cmd
+                    .spawn()
                     .map_err(|e| format!("启动 {} 失败: {}", runner, e))?;
 
                 let output = tokio::time::timeout(
                     std::time::Duration::from_secs(*timeout_secs),
-                    child.wait_with_output()
-                ).await;
+                    child.wait_with_output(),
+                )
+                .await;
 
                 let _ = tokio::fs::remove_file(&tmp).await;
 
@@ -604,8 +647,13 @@ impl ScriptedCapability {
                     Err(_) => Err(format!("脚本执行超时 ({}s)", timeout_secs)),
                 }
             }
-            ActionImpl::Custom { executor_type, params } => {
-                let registry = self.executor_registry.as_ref()
+            ActionImpl::Custom {
+                executor_type,
+                params,
+            } => {
+                let registry = self
+                    .executor_registry
+                    .as_ref()
                     .ok_or_else(|| "自定义执行器注册表未配置".to_string())?;
 
                 let context = crate::meta_evolve::ExecutorContext {
@@ -613,7 +661,9 @@ impl ScriptedCapability {
                     action_name: action.to_string(),
                 };
 
-                registry.execute(executor_type, params, input, &context).await
+                registry
+                    .execute(executor_type, params, input, &context)
+                    .await
             }
         }
     }
@@ -630,7 +680,11 @@ impl Capability for ScriptedCapability {
     }
 
     fn actions(&self) -> Vec<&str> {
-        self.genome.actions.iter().map(|a| a.name.as_str()).collect()
+        self.genome
+            .actions
+            .iter()
+            .map(|a| a.name.as_str())
+            .collect()
     }
 
     fn describe(&self) -> String {
@@ -654,13 +708,15 @@ impl Capability for ScriptedCapability {
         }
 
         let start = std::time::Instant::now();
-        
+
         match self.execute_action(&msg.action, &msg.payload).await {
             Ok(result) => {
                 let latency = start.elapsed().as_millis() as f64;
                 tracing::info!(
                     "脚本能力 '{}' 执行 '{}' 成功 ({:.1}ms)",
-                    self.genome.name, msg.action, latency
+                    self.genome.name,
+                    msg.action,
+                    latency
                 );
 
                 // 更新运行时适应度（真实业务调用）
@@ -668,7 +724,8 @@ impl Capability for ScriptedCapability {
                     let mut fitness = self.runtime_fitness.write().await;
                     // Script 执行返回 Ok 时，检查 success 字段判断是否真正成功
                     // 注意：没有 success 字段时视为成功（非 Script 实现如 Llm/Rule 总是 Ok=成功）
-                    let actual_success = result.get("success")
+                    let actual_success = result
+                        .get("success")
                         .and_then(|v| v.as_bool())
                         .unwrap_or(true);
                     fitness.record_real_call(actual_success, latency);
@@ -682,7 +739,12 @@ impl Capability for ScriptedCapability {
                     .build())
             }
             Err(e) => {
-                tracing::warn!("脚本能力 '{}' 执行 '{}' 失败: {}", self.genome.name, msg.action, e);
+                tracing::warn!(
+                    "脚本能力 '{}' 执行 '{}' 失败: {}",
+                    self.genome.name,
+                    msg.action,
+                    e
+                );
 
                 // 更新运行时适应度（真实业务调用失败）
                 {
@@ -785,7 +847,12 @@ impl LlmExecutor {
     }
 
     /// 通过 CLI（devin 或 claude）执行 LLM 调用
-    async fn execute_cli(&self, prompt: &str, _model: &str, system: Option<&str>) -> Result<String, String> {
+    async fn execute_cli(
+        &self,
+        prompt: &str,
+        _model: &str,
+        system: Option<&str>,
+    ) -> Result<String, String> {
         let full_prompt = if let Some(sys) = system {
             format!("{}\n\n{}", sys, prompt)
         } else {
@@ -801,15 +868,12 @@ impl LlmExecutor {
             }
 
             let cmd = tokio::process::Command::new(&self.cli_cmd)
-                .args(&["-p", &full_prompt, "--model", &self.cli_model])
+                .args(["-p", &full_prompt, "--model", &self.cli_model])
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped())
                 .output();
 
-            let result = tokio::time::timeout(
-                std::time::Duration::from_secs(60),
-                cmd,
-            ).await;
+            let result = tokio::time::timeout(std::time::Duration::from_secs(60), cmd).await;
 
             match result {
                 Ok(Ok(output)) => {
@@ -823,7 +887,10 @@ impl LlmExecutor {
                     } else {
                         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
                         last_err = format!("{} CLI 错误: {}", self.cli_cmd, stderr.trim());
-                        if stderr.contains("402") || stderr.contains("401") || stderr.contains("Payment") {
+                        if stderr.contains("402")
+                            || stderr.contains("401")
+                            || stderr.contains("Payment")
+                        {
                             return Err(last_err);
                         }
                         continue;
@@ -840,10 +907,18 @@ impl LlmExecutor {
             }
         }
 
-        Err(format!("{} CLI 调用失败（重试 3 次）: {}", self.cli_cmd, last_err))
+        Err(format!(
+            "{} CLI 调用失败（重试 3 次）: {}",
+            self.cli_cmd, last_err
+        ))
     }
 
-    pub async fn execute(&self, prompt: &str, model: &str, system: Option<&str>) -> Result<String, String> {
+    pub async fn execute(
+        &self,
+        prompt: &str,
+        model: &str,
+        system: Option<&str>,
+    ) -> Result<String, String> {
         // CLI 后端（devin 或 claude）
         if self.use_cli {
             return self.execute_cli(prompt, model, system).await;
@@ -868,8 +943,7 @@ impl LlmExecutor {
         } else if model.starts_with("coder:") {
             self.coder_model.clone()
         } else if model == "auto" {
-            std::env::var("ORCH_MODEL")
-                .unwrap_or_else(|_| self.fast_model.clone())
+            std::env::var("ORCH_MODEL").unwrap_or_else(|_| self.fast_model.clone())
         } else {
             model.to_string()
         }
@@ -881,7 +955,12 @@ impl LlmExecutor {
     /// 将这部分提取为 system message 可以被 API 自动缓存。
     fn split_prompt_for_cache(prompt: &str) -> (Option<String>, String) {
         // 寻找 "返回严格 JSON" 或 "只返回 JSON" 作为分割点
-        let split_markers = ["返回严格 JSON", "只返回 JSON", "请判断目标是否已达成", "请创造一个新能力"];
+        let split_markers = [
+            "返回严格 JSON",
+            "只返回 JSON",
+            "请判断目标是否已达成",
+            "请创造一个新能力",
+        ];
         for marker in &split_markers {
             if let Some(pos) = prompt.find(marker) {
                 let system_part = &prompt[..pos];
@@ -895,7 +974,12 @@ impl LlmExecutor {
     }
 
     /// OpenAI 兼容格式调用
-    async fn execute_openai(&self, prompt: &str, model: &str, system: Option<&str>) -> Result<String, String> {
+    async fn execute_openai(
+        &self,
+        prompt: &str,
+        model: &str,
+        system: Option<&str>,
+    ) -> Result<String, String> {
         use serde::Serialize;
 
         #[derive(Serialize)]
@@ -958,7 +1042,8 @@ impl LlmExecutor {
                     tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
                 }
 
-                let resp = match self.http
+                let resp = match self
+                    .http
                     .post(url)
                     .header("Authorization", format!("Bearer {}", self.api_key))
                     .header("content-type", "application/json")
@@ -977,7 +1062,11 @@ impl LlmExecutor {
                     let status = resp.status();
                     let body = resp.text().await.unwrap_or_default();
                     if status.is_server_error() {
-                        last_err = format!("OpenAI API 错误 ({}): {}", status, &body[..200.min(body.len())]);
+                        last_err = format!(
+                            "OpenAI API 错误 ({}): {}",
+                            status,
+                            &body[..200.min(body.len())]
+                        );
                         continue;
                     }
                     return Err(format!("OpenAI API 错误 ({}): {}", status, body));
@@ -989,20 +1078,32 @@ impl LlmExecutor {
                 if let Ok(usage) = serde_json::from_str::<serde_json::Value>(&body_text)
                     .map(|v| v.get("usage").cloned().unwrap_or(serde_json::json!({})))
                 {
-                    let prompt_tokens = usage.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-                    let cached = usage.get("prompt_cache_hit_tokens")
+                    let prompt_tokens = usage
+                        .get("prompt_tokens")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                    let cached = usage
+                        .get("prompt_cache_hit_tokens")
                         .or_else(|| usage.get("cached_tokens"))
-                        .and_then(|v| v.as_u64()).unwrap_or(0);
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
                     if cached > 0 {
-                        tracing::info!("💾 prompt cache: {}/{} tokens cached ({:.0}%)",
-                            cached, prompt_tokens, cached as f64 / prompt_tokens as f64 * 100.0);
+                        tracing::info!(
+                            "💾 prompt cache: {}/{} tokens cached ({:.0}%)",
+                            cached,
+                            prompt_tokens,
+                            cached as f64 / prompt_tokens as f64 * 100.0
+                        );
                     }
                 }
 
                 let r: OpenAiResp = match serde_json::from_str(&body_text) {
                     Ok(r) => r,
                     Err(e) => {
-                        tracing::warn!("OpenAI API 原始响应: {}", &body_text[..500.min(body_text.len())]);
+                        tracing::warn!(
+                            "OpenAI API 原始响应: {}",
+                            &body_text[..500.min(body_text.len())]
+                        );
                         last_err = format!("OpenAI API 响应解析失败: {}", e);
                         continue;
                     }
@@ -1025,7 +1126,12 @@ impl LlmExecutor {
     }
 
     /// Anthropic 格式调用
-    async fn execute_anthropic(&self, prompt: &str, model: &str, system: Option<&str>) -> Result<String, String> {
+    async fn execute_anthropic(
+        &self,
+        prompt: &str,
+        model: &str,
+        system: Option<&str>,
+    ) -> Result<String, String> {
         use serde::Serialize;
 
         #[derive(Serialize)]
@@ -1062,7 +1168,8 @@ impl LlmExecutor {
                 tokio::time::sleep(tokio::time::Duration::from_secs(2 * attempt as u64)).await;
             }
 
-            let resp = match self.http
+            let resp = match self
+                .http
                 .post(&url)
                 .header("x-api-key", &self.api_key)
                 .header("anthropic-version", "2023-06-01")
@@ -1082,7 +1189,11 @@ impl LlmExecutor {
                 let status = resp.status();
                 let body = resp.text().await.unwrap_or_default();
                 if status.is_server_error() {
-                    last_err = format!("Anthropic API 错误 ({}): {}", status, &body[..200.min(body.len())]);
+                    last_err = format!(
+                        "Anthropic API 错误 ({}): {}",
+                        status,
+                        &body[..200.min(body.len())]
+                    );
                     continue;
                 }
                 return Err(format!("Anthropic API 错误 ({}): {}", status, body));
@@ -1112,7 +1223,9 @@ impl LlmExecutor {
         let block_types: Vec<&str> = r.content.iter().map(|c| c.ct.as_str()).collect();
         tracing::debug!("LLM content blocks: {:?}", block_types);
 
-        let text = r.content.iter()
+        let text = r
+            .content
+            .iter()
             .filter(|c| c.ct == "text")
             .filter_map(|c| c.text.clone())
             .collect::<Vec<_>>()
@@ -1121,20 +1234,23 @@ impl LlmExecutor {
         if text.is_empty() {
             tracing::warn!("LLM 返回空文本 (block types: {:?})", block_types);
             // 尝试取所有 block 的 text 字段，不管 type
-            let all_text: String = r.content.iter()
-                .filter_map(|c| c.text.clone())
-                .collect();
+            let all_text: String = r.content.iter().filter_map(|c| c.text.clone()).collect();
             if !all_text.is_empty() {
                 return Ok(all_text);
             }
             // 尝试从 thinking block 提取内容作为 fallback
-            let thinking_text: String = r.content.iter()
+            let thinking_text: String = r
+                .content
+                .iter()
                 .filter(|c| c.ct == "thinking")
                 .filter_map(|c| c.thinking.clone())
                 .collect::<Vec<_>>()
                 .join("\n");
             if !thinking_text.is_empty() {
-                tracing::warn!("使用 thinking block 内容作为 fallback ({} 字符)", thinking_text.len());
+                tracing::warn!(
+                    "使用 thinking block 内容作为 fallback ({} 字符)",
+                    thinking_text.len()
+                );
                 return Ok(thinking_text);
             }
             return Err(format!("LLM 返回空内容 (block types: {:?})", block_types));
@@ -1151,7 +1267,7 @@ fn render_template(template: &str, input: &serde_json::Value) -> String {
     // 支持 {{a.b.c}} 形式的嵌套路径引用
     // 用正则找到所有 {{...}} 占位符
     let re = regex::Regex::new(r"\{\{([\w.]+)\}\}").unwrap();
-    for cap in re.captures_iter(&template.to_string()) {
+    for cap in re.captures_iter(template) {
         let path = &cap[1];
         let placeholder = format!("{{{{{}}}}}", path);
 
@@ -1189,11 +1305,12 @@ fn render_template(template: &str, input: &serde_json::Value) -> String {
 }
 
 /// 模板渲染（JSON Value 版本）
-fn render_template_value(template: &serde_json::Value, input: &serde_json::Value) -> serde_json::Value {
+fn render_template_value(
+    template: &serde_json::Value,
+    input: &serde_json::Value,
+) -> serde_json::Value {
     match template {
-        serde_json::Value::String(s) => {
-            serde_json::Value::String(render_template(s, input))
-        }
+        serde_json::Value::String(s) => serde_json::Value::String(render_template(s, input)),
         serde_json::Value::Object(map) => {
             let mut result = serde_json::Map::new();
             for (k, v) in map {
@@ -1201,9 +1318,11 @@ fn render_template_value(template: &serde_json::Value, input: &serde_json::Value
             }
             serde_json::Value::Object(result)
         }
-        serde_json::Value::Array(arr) => {
-            serde_json::Value::Array(arr.iter().map(|v| render_template_value(v, input)).collect())
-        }
+        serde_json::Value::Array(arr) => serde_json::Value::Array(
+            arr.iter()
+                .map(|v| render_template_value(v, input))
+                .collect(),
+        ),
         _ => template.clone(),
     }
 }
@@ -1261,10 +1380,10 @@ mod tests {
     #[test]
     fn test_auto_test_score_lower_than_real_call() {
         let mut f1 = FitnessGene::default();
-        f1.record_auto_test(true, 10.0);  // 快速通过
+        f1.record_auto_test(true, 10.0); // 快速通过
 
         let mut f2 = FitnessGene::default();
-        f2.record_real_call(true, 10.0);  // 同样快速通过
+        f2.record_real_call(true, 10.0); // 同样快速通过
 
         assert!(f1.score < f2.score, "自测试分数应低于真实调用分数");
         assert!(f1.score <= 0.1, "自测试分数不应超过 0.1");

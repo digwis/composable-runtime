@@ -222,8 +222,8 @@ mod tests {
 
     #[test]
     fn test_step_with_retry() {
-        let step = Step::new("s1", "compute", "add", serde_json::json!({}))
-            .with_retry(RetryPolicy {
+        let step =
+            Step::new("s1", "compute", "add", serde_json::json!({})).with_retry(RetryPolicy {
                 max_retries: 5,
                 delay_ms: 200,
                 backoff_multiplier: 3.0,
@@ -236,8 +236,7 @@ mod tests {
 
     #[test]
     fn test_step_with_timeout() {
-        let step = Step::new("s1", "compute", "add", serde_json::json!({}))
-            .with_timeout(5000);
+        let step = Step::new("s1", "compute", "add", serde_json::json!({})).with_timeout(5000);
         assert_eq!(step.timeout_ms, Some(5000));
     }
 
@@ -250,10 +249,13 @@ mod tests {
 
     #[test]
     fn test_parallel_group_new() {
-        let group = ParallelGroup::new("grp", vec![
-            Step::new("a", "compute", "add", serde_json::json!({})),
-            Step::new("b", "greet", "hello", serde_json::json!({})),
-        ]);
+        let group = ParallelGroup::new(
+            "grp",
+            vec![
+                Step::new("a", "compute", "add", serde_json::json!({})),
+                Step::new("b", "greet", "hello", serde_json::json!({})),
+            ],
+        );
         assert_eq!(group.name, "grp");
         assert_eq!(group.parallel.len(), 2);
     }

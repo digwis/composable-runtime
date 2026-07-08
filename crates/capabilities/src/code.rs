@@ -74,7 +74,14 @@ impl Capability for CodeCapability {
                         detail: format!("写入临时文件失败: {}", e),
                     })?;
 
-                let result = run_command("python3", &[tmp.to_string_lossy().to_string()], &input.cwd, &input.env, input.timeout_secs).await?;
+                let result = run_command(
+                    "python3",
+                    &[tmp.to_string_lossy().to_string()],
+                    &input.cwd,
+                    &input.env,
+                    input.timeout_secs,
+                )
+                .await?;
 
                 let _ = tokio::fs::remove_file(&tmp).await;
 
@@ -105,7 +112,14 @@ impl Capability for CodeCapability {
                         detail: format!("写入临时文件失败: {}", e),
                     })?;
 
-                let result = run_command("node", &[tmp.to_string_lossy().to_string()], &input.cwd, &input.env, input.timeout_secs).await?;
+                let result = run_command(
+                    "node",
+                    &[tmp.to_string_lossy().to_string()],
+                    &input.cwd,
+                    &input.env,
+                    input.timeout_secs,
+                )
+                .await?;
 
                 let _ = tokio::fs::remove_file(&tmp).await;
 
@@ -130,7 +144,14 @@ impl Capability for CodeCapability {
                 let mut args = vec![input.path.clone()];
                 args.extend(input.args.iter().cloned());
 
-                let result = run_command("python3", &args, &input.cwd, &std::collections::HashMap::new(), input.timeout_secs).await?;
+                let result = run_command(
+                    "python3",
+                    &args,
+                    &input.cwd,
+                    &std::collections::HashMap::new(),
+                    input.timeout_secs,
+                )
+                .await?;
 
                 let output = CodeRunOutput {
                     language: "python".into(),
@@ -153,7 +174,14 @@ impl Capability for CodeCapability {
                 let mut args = vec![input.path.clone()];
                 args.extend(input.args.iter().cloned());
 
-                let result = run_command("node", &args, &input.cwd, &std::collections::HashMap::new(), input.timeout_secs).await?;
+                let result = run_command(
+                    "node",
+                    &args,
+                    &input.cwd,
+                    &std::collections::HashMap::new(),
+                    input.timeout_secs,
+                )
+                .await?;
 
                 let output = CodeRunOutput {
                     language: "node".into(),
@@ -220,12 +248,13 @@ async fn run_command(
             detail: format!("等待失败: {}", e),
         })?
     } else {
-        child.wait_with_output().await.map_err(|e| {
-            MessageError::Internal {
+        child
+            .wait_with_output()
+            .await
+            .map_err(|e| MessageError::Internal {
                 capability: "code".into(),
                 detail: format!("等待失败: {}", e),
-            }
-        })?
+            })?
     };
 
     Ok((

@@ -78,7 +78,9 @@ pub struct AutonomousRuntime {
 impl AutonomousRuntime {
     pub fn new(llm: Arc<LlmExecutor>, bus: Arc<MessageBus>, platform: Platform) -> Self {
         Self {
-            llm, bus, platform,
+            llm,
+            bus,
+            platform,
             history: Vec::new(),
             max_history: 100,
         }
@@ -86,13 +88,16 @@ impl AutonomousRuntime {
 
     /// 1. 环境感知 — 通过已有能力观测环境
     pub async fn perceive(&self) -> EnvironmentReport {
-        let mut report = EnvironmentReport::default();
-        report.timestamp = now_secs();
+        let mut report = EnvironmentReport {
+            timestamp: now_secs(),
+            ..Default::default()
+        };
 
         // 磁盘使用率
         if let Ok(out) = tokio::process::Command::new("df")
-            .args(&["-h", "/"])
-            .output().await
+            .args(["-h", "/"])
+            .output()
+            .await
         {
             let s = String::from_utf8_lossy(&out.stdout);
             for line in s.lines().skip(1) {
@@ -118,8 +123,9 @@ impl AutonomousRuntime {
 
         // 运行进程
         if let Ok(out) = tokio::process::Command::new("ps")
-            .args(&["aux", "--sort=-%cpu"])
-            .output().await
+            .args(["aux", "--sort=-%cpu"])
+            .output()
+            .await
         {
             let s = String::from_utf8_lossy(&out.stdout);
             for line in s.lines().skip(1).take(10) {
@@ -132,8 +138,9 @@ impl AutonomousRuntime {
 
         // 监听端口
         if let Ok(out) = tokio::process::Command::new("lsof")
-            .args(&["-iTCP", "-sTCP:LISTEN", "-P", "-n"])
-            .output().await
+            .args(["-iTCP", "-sTCP:LISTEN", "-P", "-n"])
+            .output()
+            .await
         {
             let s = String::from_utf8_lossy(&out.stdout);
             for line in s.lines().skip(1) {
@@ -151,8 +158,9 @@ impl AutonomousRuntime {
 
         // Git 状态
         if let Ok(out) = tokio::process::Command::new("git")
-            .args(&["status", "--short"])
-            .output().await
+            .args(["status", "--short"])
+            .output()
+            .await
         {
             let s = String::from_utf8_lossy(&out.stdout);
             if !s.trim().is_empty() {
@@ -162,9 +170,13 @@ impl AutonomousRuntime {
 
         // 最近修改的文件
         if let Ok(out) = tokio::process::Command::new("find")
-            .args(&[".", "-name", "*.rs", "-o", "-name", "*.py", "-o", "-name", "*.ts"])
-            .arg("-mtime").arg("-1")
-            .output().await
+            .args([
+                ".", "-name", "*.rs", "-o", "-name", "*.py", "-o", "-name", "*.ts",
+            ])
+            .arg("-mtime")
+            .arg("-1")
+            .output()
+            .await
         {
             let s = String::from_utf8_lossy(&out.stdout);
             report.recent_files = s.lines().take(20).map(String::from).collect();
@@ -183,7 +195,7 @@ impl AutonomousRuntime {
         let caps_str = capabilities.join(", ");
 
         let prompt = format!(
-r#"你是自主运行时的目标生成器。
+            r#"你是自主运行时的目标生成器。
 
 当前环境状态：
 {}
@@ -224,7 +236,9 @@ r#"你是自主运行时的目标生成器。
         // 尝试提取 JSON 数组
         if let Some(start) = response.find('[') {
             if let Some(end) = response.rfind(']') {
-                if let Ok(goals) = serde_json::from_str::<Vec<AutonomousGoal>>(&response[start..=end]) {
+                if let Ok(goals) =
+                    serde_json::from_str::<Vec<AutonomousGoal>>(&response[start..=end])
+                {
                     return goals;
                 }
             }
@@ -259,11 +273,16 @@ r#"你是自主运行时的目标生成器。
 
                     match self.bus.send(msg).await {
                         Ok(resp) => {
-                            let success = resp.payload.get("success")
+                            let success = resp
+                                .payload
+                                .get("success")
                                 .and_then(|s| s.as_bool())
                                 .unwrap_or(false);
-                            let error = if success { None } else {
-                                resp.payload.get("error")
+                            let error = if success {
+                                None
+                            } else {
+                                resp.payload
+                                    .get("error")
                                     .and_then(|e| e.as_str())
                                     .map(String::from)
                             };
@@ -330,7 +349,7 @@ r#"你是自主运行时的目标生成器。
         // 让 LLM 根据环境状态生成一个真实的测试场景
         let env_json = serde_json::to_string(env).unwrap_or_default();
         let prompt = format!(
-r#"你是一个能力的测试员。有一个新能力：
+            r#"你是一个能力的测试员。有一个新能力：
 - 名称: {}
 - 描述: {}
 - 动作: {}
@@ -342,14 +361,16 @@ r#"你是一个能力的测试员。有一个新能力：
 只返回 JSON，不要其他文字。"#,
             genome.name,
             genome.description,
-            genome.actions.first().map(|a| &a.name).unwrap_or(&"".to_string()),
+            genome
+                .actions
+                .first()
+                .map(|a| &a.name)
+                .unwrap_or(&"".to_string()),
             env_json,
         );
 
         let test_input = match self.llm.execute(&prompt, "fast:envtest", None).await {
-            Ok(r) => {
-                serde_json::from_str::<serde_json::Value>(&r).unwrap_or(serde_json::json!({}))
-            }
+            Ok(r) => serde_json::from_str::<serde_json::Value>(&r).unwrap_or(serde_json::json!({})),
             Err(_) => serde_json::json!({}),
         };
 
@@ -385,11 +406,16 @@ r#"你是一个能力的测试员。有一个新能力：
 
         match self.bus.send(msg).await {
             Ok(resp) => {
-                let success = resp.payload.get("success")
+                let success = resp
+                    .payload
+                    .get("success")
                     .and_then(|s| s.as_bool())
                     .unwrap_or(false);
-                let error = if success { None } else {
-                    resp.payload.get("error")
+                let error = if success {
+                    None
+                } else {
+                    resp.payload
+                        .get("error")
                         .and_then(|e| e.as_str())
                         .map(String::from)
                 };
@@ -442,7 +468,11 @@ r#"你是一个能力的测试员。有一个新能力：
             report.disk_usage_pct,
             report.network_listening.len(),
             report.running_processes.len(),
-            if report.git_status.is_some() { "有变更" } else { "干净" },
+            if report.git_status.is_some() {
+                "有变更"
+            } else {
+                "干净"
+            },
         );
 
         // 2. 生成目标
@@ -455,7 +485,9 @@ r#"你是一个能力的测试员。有一个新能力：
         for goal in &goals {
             tracing::info!(
                 "自主循环: 执行目标 [{:?}] {} — {}",
-                goal.priority, goal.description, goal.reason
+                goal.priority,
+                goal.description,
+                goal.reason
             );
             let result = self.execute_goal(goal, evolution).await;
             if result.success {
@@ -505,14 +537,15 @@ r#"你是一个能力的测试员。有一个新能力：
         // 用 LLM 生成真实输入
         let schema_str = serde_json::to_string_pretty(schema).unwrap_or_default();
         let prompt = format!(
-r#"为能力测试生成真实合理的输入数据。
+            r#"为能力测试生成真实合理的输入数据。
 
 能力: {cap_name} — {cap_desc}
 动作: {action_name} — {action_desc}
 输入 Schema: {schema_str}
 
 请生成一个真实场景下的测试输入，确保数据有意义、能触发核心逻辑。
-返回严格 JSON（直接可用的输入对象，不要包裹在其他结构中）:"#);
+返回严格 JSON（直接可用的输入对象，不要包裹在其他结构中）:"#
+        );
 
         match self.llm.execute(&prompt, "fast:autoinput", None).await {
             Ok(text) => {
@@ -534,7 +567,11 @@ r#"为能力测试生成真实合理的输入数据。
 
     fn fallback_input(&self, action: &crate::genome::ActionGene) -> serde_json::Value {
         let mut test = serde_json::Map::new();
-        if let Some(props) = action.input_schema.get("properties").and_then(|p| p.as_object()) {
+        if let Some(props) = action
+            .input_schema
+            .get("properties")
+            .and_then(|p| p.as_object())
+        {
             for (key, schema) in props {
                 let value = match schema.get("type").and_then(|t| t.as_str()) {
                     Some("string") => serde_json::json!("test"),

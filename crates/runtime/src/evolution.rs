@@ -1,4 +1,6 @@
-use crate::genome::{CapabilityGenome, FitnessGene, LineageGene, Origin, ScriptedCapability, LlmExecutor};
+use crate::genome::{
+    CapabilityGenome, FitnessGene, LineageGene, LlmExecutor, Origin, ScriptedCapability,
+};
 use crate::message_bus::MessageBus;
 use crate::meta_evolve::ExecutorRegistry;
 use serde::{Deserialize, Serialize};
@@ -68,7 +70,8 @@ impl EvolutionEngine {
         let name = genome.name.clone();
         // P2-2: 自动计算依赖复杂度
         let mut g = genome;
-        g.fitness.dependency_complexity = crate::genome::FitnessGene::compute_dependency_complexity(&g);
+        g.fitness.dependency_complexity =
+            crate::genome::FitnessGene::compute_dependency_complexity(&g);
         self.genomes.insert(name, g);
         self.save();
     }
@@ -88,7 +91,8 @@ impl EvolutionEngine {
     /// 用于淘汰前检查是否会引发连锁失败。
     pub fn find_dependents(&self, name: &str) -> Vec<String> {
         use crate::genome::ActionImpl;
-        self.genomes.iter()
+        self.genomes
+            .iter()
             .filter(|(_, g)| {
                 g.actions.iter().any(|a| {
                     if let ActionImpl::Composite { steps } = &a.implementation {
@@ -125,7 +129,8 @@ impl EvolutionEngine {
         };
 
         // 重复组：基础名有多个版本
-        let duplicate_groups: Vec<(String, Vec<String>)> = base_names.iter()
+        let duplicate_groups: Vec<(String, Vec<String>)> = base_names
+            .iter()
             .filter(|(_, names)| names.len() > 1)
             .map(|(base, names)| (base.clone(), names.clone()))
             .collect();
@@ -133,11 +138,7 @@ impl EvolutionEngine {
         // 多样性 = 1 - 重复比例
         let total = self.genomes.len() as f64;
         let unique = base_names.len() as f64;
-        let diversity = if total > 0.0 {
-            unique / total
-        } else {
-            1.0
-        };
+        let diversity = if total > 0.0 { unique / total } else { 1.0 };
 
         (diversity, duplicate_groups)
     }
@@ -164,7 +165,9 @@ impl EvolutionEngine {
         capability_name: &str,
         mutation: Mutation,
     ) -> Result<&CapabilityGenome, String> {
-        let genome = self.genomes.get(capability_name)
+        let genome = self
+            .genomes
+            .get(capability_name)
             .ok_or_else(|| format!("能力 '{}' 不存在", capability_name))?
             .clone();
 
@@ -175,14 +178,18 @@ impl EvolutionEngine {
 
         match &mutation {
             Mutation::PromptChange { action, new_prompt } => {
-                let action_gene = new_genome.actions.iter_mut()
+                let action_gene = new_genome
+                    .actions
+                    .iter_mut()
                     .find(|a| a.name == *action)
                     .ok_or_else(|| format!("动作 '{}' 不存在", action))?;
-                if let crate::genome::ActionImpl::Llm { prompt, .. } = &mut action_gene.implementation {
+                if let crate::genome::ActionImpl::Llm { prompt, .. } =
+                    &mut action_gene.implementation
+                {
                     *prompt = new_prompt.clone();
                 }
-                new_genome.record_mutation("prompt_change", 
-                    format!("动作 '{}' 提示模板变更", action));
+                new_genome
+                    .record_mutation("prompt_change", format!("动作 '{}' 提示模板变更", action));
             }
             Mutation::DescriptionChange { new_description } => {
                 new_genome.description = new_description.clone();
@@ -190,23 +197,27 @@ impl EvolutionEngine {
             }
             Mutation::ActionAdd { action } => {
                 new_genome.actions.push(action.clone());
-                new_genome.record_mutation("action_add", 
-                    format!("新增动作 '{}'", action.name));
+                new_genome.record_mutation("action_add", format!("新增动作 '{}'", action.name));
             }
             Mutation::ActionRemove { action_name } => {
                 new_genome.actions.retain(|a| a.name != *action_name);
-                new_genome.record_mutation("action_remove", 
-                    format!("删除动作 '{}'", action_name));
+                new_genome.record_mutation("action_remove", format!("删除动作 '{}'", action_name));
             }
             Mutation::ModelChange { action, new_model } => {
-                let action_gene = new_genome.actions.iter_mut()
+                let action_gene = new_genome
+                    .actions
+                    .iter_mut()
                     .find(|a| a.name == *action)
                     .ok_or_else(|| format!("动作 '{}' 不存在", action))?;
-                if let crate::genome::ActionImpl::Llm { model, .. } = &mut action_gene.implementation {
+                if let crate::genome::ActionImpl::Llm { model, .. } =
+                    &mut action_gene.implementation
+                {
                     *model = new_model.clone();
                 }
-                new_genome.record_mutation("model_change",
-                    format!("动作 '{}' 模型变更为 '{}'", action, new_model));
+                new_genome.record_mutation(
+                    "model_change",
+                    format!("动作 '{}' 模型变更为 '{}'", action, new_model),
+                );
             }
         }
 
@@ -235,21 +246,29 @@ impl EvolutionEngine {
         parent_b: &str,
         new_name: &str,
     ) -> Result<&CapabilityGenome, String> {
-        let genome_a = self.genomes.get(parent_a)
+        let genome_a = self
+            .genomes
+            .get(parent_a)
             .ok_or_else(|| format!("能力 '{}' 不存在", parent_a))?;
-        let genome_b = self.genomes.get(parent_b)
+        let genome_b = self
+            .genomes
+            .get(parent_b)
             .ok_or_else(|| format!("能力 '{}' 不存在", parent_b))?;
 
         let mut new_genome = CapabilityGenome {
             name: new_name.to_string(),
             version: "0.1.0".to_string(),
-            description: format!("{} + {} 的交叉后代", genome_a.description, genome_b.description),
+            description: format!(
+                "{} + {} 的交叉后代",
+                genome_a.description, genome_b.description
+            ),
             actions: Vec::new(),
             fitness: FitnessGene::default(),
             lineage: LineageGene {
                 origin: Origin::Crossbred,
                 parent: Some(format!("{}+{}", parent_a, parent_b)),
-                generation: std::cmp::max(genome_a.lineage.generation, genome_b.lineage.generation) + 1,
+                generation: std::cmp::max(genome_a.lineage.generation, genome_b.lineage.generation)
+                    + 1,
                 mutations: Vec::new(),
             },
             test_suite: Vec::new(),
@@ -265,8 +284,7 @@ impl EvolutionEngine {
             new_genome.actions.push(action.clone());
         }
 
-        new_genome.record_mutation("crossover",
-            format!("{} × {} 交叉", parent_a, parent_b));
+        new_genome.record_mutation("crossover", format!("{} × {} 交叉", parent_a, parent_b));
 
         self.history.push(EvolutionEvent {
             event_type: "crossover".into(),
@@ -285,10 +303,10 @@ impl EvolutionEngine {
 
     /// 自然选择 — 淘汰适应度低于阈值的能力
     pub fn natural_selection(&mut self, min_score: f64) -> Vec<String> {
-        let eliminated: Vec<String> = self.genomes.iter()
-            .filter(|(_, g)| {
-                g.fitness.call_count > 3 && g.fitness.score < min_score
-            })
+        let eliminated: Vec<String> = self
+            .genomes
+            .iter()
+            .filter(|(_, g)| g.fitness.call_count > 3 && g.fitness.score < min_score)
             .map(|(name, _)| name.clone())
             .collect();
 
@@ -297,8 +315,14 @@ impl EvolutionEngine {
             self.history.push(EvolutionEvent {
                 event_type: "elimination".into(),
                 capability: name.clone(),
-                description: format!("适应度 {:.2} 低于阈值 {}, 淘汰", 
-                    self.genomes.get(name).map(|g| g.fitness.score).unwrap_or(0.0), min_score),
+                description: format!(
+                    "适应度 {:.2} 低于阈值 {}, 淘汰",
+                    self.genomes
+                        .get(name)
+                        .map(|g| g.fitness.score)
+                        .unwrap_or(0.0),
+                    min_score
+                ),
                 timestamp: now_string(),
                 generation: 0,
             });
@@ -314,7 +338,9 @@ impl EvolutionEngine {
 
     /// 将基因组注册为运行时能力
     pub async fn register_to_bus(&self, bus: &MessageBus, genome_name: &str) -> Result<(), String> {
-        let genome = self.genomes.get(genome_name)
+        let genome = self
+            .genomes
+            .get(genome_name)
             .ok_or_else(|| format!("基因组 '{}' 不存在", genome_name))?;
 
         let mut cap = ScriptedCapability::from_genome(genome.clone());
@@ -361,7 +387,12 @@ impl EvolutionEngine {
 
         report.push_str("── 能力适应度排名 ──\n");
         let mut sorted: Vec<_> = self.genomes.iter().collect();
-        sorted.sort_by(|a, b| b.1.fitness.score.partial_cmp(&a.1.fitness.score).unwrap_or(std::cmp::Ordering::Equal));
+        sorted.sort_by(|a, b| {
+            b.1.fitness
+                .score
+                .partial_cmp(&a.1.fitness.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         for (name, genome) in sorted {
             let stars = "★".repeat((genome.fitness.score * 5.0) as usize);
@@ -445,27 +476,15 @@ impl EvolutionEngine {
 #[derive(Debug, Clone)]
 pub enum Mutation {
     /// 修改 LLM 提示模板
-    PromptChange {
-        action: String,
-        new_prompt: String,
-    },
+    PromptChange { action: String, new_prompt: String },
     /// 修改描述
-    DescriptionChange {
-        new_description: String,
-    },
+    DescriptionChange { new_description: String },
     /// 添加动作
-    ActionAdd {
-        action: crate::genome::ActionGene,
-    },
+    ActionAdd { action: crate::genome::ActionGene },
     /// 删除动作
-    ActionRemove {
-        action_name: String,
-    },
+    ActionRemove { action_name: String },
     /// 修改模型
-    ModelChange {
-        action: String,
-        new_model: String,
-    },
+    ModelChange { action: String, new_model: String },
 }
 
 impl Mutation {
@@ -475,7 +494,9 @@ impl Mutation {
             Self::DescriptionChange { .. } => "描述变更".into(),
             Self::ActionAdd { action } => format!("新增动作 '{}'", action.name),
             Self::ActionRemove { action_name } => format!("删除动作 '{}'", action_name),
-            Self::ModelChange { action, new_model } => format!("动作 '{}' 模型→'{}'", action, new_model),
+            Self::ModelChange { action, new_model } => {
+                format!("动作 '{}' 模型→'{}'", action, new_model)
+            }
         }
     }
 }
@@ -586,10 +607,13 @@ mod tests {
             system: None,
         };
         evo.register_genome(genome);
-        let result = evo.mutate("llm_cap", Mutation::PromptChange {
-            action: "act".into(),
-            new_prompt: "新提示".into(),
-        });
+        let result = evo.mutate(
+            "llm_cap",
+            Mutation::PromptChange {
+                action: "act".into(),
+                new_prompt: "新提示".into(),
+            },
+        );
         assert!(result.is_ok());
         let g = result.unwrap();
         if let ActionImpl::Llm { prompt, .. } = &g.actions[0].implementation {
@@ -605,9 +629,12 @@ mod tests {
         let tmp = std::env::temp_dir().join(format!("evo_test_{}", uuid::Uuid::new_v4()));
         let mut evo = EvolutionEngine::new(&tmp);
         evo.register_genome(make_test_genome("desc_cap"));
-        let result = evo.mutate("desc_cap", Mutation::DescriptionChange {
-            new_description: "新描述".into(),
-        });
+        let result = evo.mutate(
+            "desc_cap",
+            Mutation::DescriptionChange {
+                new_description: "新描述".into(),
+            },
+        );
         assert!(result.is_ok());
         assert_eq!(result.unwrap().description, "新描述");
     }
@@ -616,9 +643,12 @@ mod tests {
     fn test_mutate_nonexistent() {
         let tmp = std::env::temp_dir().join(format!("evo_test_{}", uuid::Uuid::new_v4()));
         let mut evo = EvolutionEngine::new(&tmp);
-        let result = evo.mutate("no_such_cap", Mutation::DescriptionChange {
-            new_description: "x".into(),
-        });
+        let result = evo.mutate(
+            "no_such_cap",
+            Mutation::DescriptionChange {
+                new_description: "x".into(),
+            },
+        );
         assert!(result.is_err());
     }
 
@@ -643,9 +673,26 @@ mod tests {
 
     #[test]
     fn test_mutation_description() {
-        assert!(Mutation::PromptChange { action: "a".into(), new_prompt: "p".into() }.description().contains("提示变更"));
-        assert!(Mutation::DescriptionChange { new_description: "d".into() }.description().contains("描述变更"));
-        assert!(Mutation::ActionAdd { action: make_test_genome("x").actions[0].clone() }.description().contains("新增动作"));
-        assert!(Mutation::ActionRemove { action_name: "a".into() }.description().contains("删除动作"));
+        assert!(Mutation::PromptChange {
+            action: "a".into(),
+            new_prompt: "p".into()
+        }
+        .description()
+        .contains("提示变更"));
+        assert!(Mutation::DescriptionChange {
+            new_description: "d".into()
+        }
+        .description()
+        .contains("描述变更"));
+        assert!(Mutation::ActionAdd {
+            action: make_test_genome("x").actions[0].clone()
+        }
+        .description()
+        .contains("新增动作"));
+        assert!(Mutation::ActionRemove {
+            action_name: "a".into()
+        }
+        .description()
+        .contains("删除动作"));
     }
 }

@@ -134,3 +134,140 @@ impl Default for MessageBus {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::message::Message;
+
+    struct MockCapability {
+        name: String,
+    }
+
+    #[async_trait::async_trait]
+    impl Capability for MockCapability {
+        fn name(&self) -> &str {
+            &self.name
+        }
+        fn actions(&self) -> Vec<&str> {
+            vec!["ping"]
+        }
+        async fn handle(&self, msg: &Message) -> MessageResult {
+            Ok(Message::builder()
+                .from(&self.name)
+                .to(msg.from.as_deref().unwrap_or("caller"))
+                .action("pong")
+                .payload(serde_json::json!({"echo": msg.payload}))
+                .build())
+        }
+    }
+
+    #[tokio::test]
+    async fn test_register_and_list() {
+        let bus = MessageBus::new();
+        bus.register(Arc::new(MockCapability {
+            name: "cap_a".into(),
+        }))
+        .await;
+        let list = bus.list_capabilities().await;
+        assert_eq!(list, vec!["cap_a"]);
+    }
+
+    #[tokio::test]
+    async fn test_register_duplicate_skipped() {
+        let bus = MessageBus::new();
+        bus.register(Arc::new(MockCapability { name: "dup".into() }))
+            .await;
+        bus.register(Arc::new(MockCapability { name: "dup".into() }))
+            .await;
+        let list = bus.list_capabilities().await;
+        assert_eq!(list.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_register_force_overwrites() {
+        let bus = MessageBus::new();
+        bus.register(Arc::new(MockCapability {
+            name: "force_cap".into(),
+        }))
+        .await;
+        bus.register_force(Arc::new(MockCapability {
+            name: "force_cap".into(),
+        }))
+        .await;
+        assert_eq!(bus.list_capabilities().await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_send_to_unregistered() {
+        let bus = MessageBus::new();
+        let msg = Message::builder().to("no_such").action("test").build();
+        let result = bus.send(msg).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_send_success() {
+        let bus = MessageBus::new();
+        bus.register(Arc::new(MockCapability {
+            name: "echo".into(),
+        }))
+        .await;
+        let msg = Message::builder()
+            .from("test")
+            .to("echo")
+            .action("ping")
+            .payload(serde_json::json!({"data": 42}))
+            .build();
+        let result = bus.send(msg).await;
+        assert!(result.is_ok());
+        let resp = result.unwrap();
+        assert_eq!(resp.action, "pong");
+        assert_eq!(resp.payload["echo"]["data"], 42);
+    }
+
+    #[tokio::test]
+    async fn test_history_recorded() {
+        let bus = MessageBus::new();
+        bus.register(Arc::new(MockCapability {
+            name: "h_cap".into(),
+        }))
+        .await;
+        let msg = Message::builder().to("h_cap").action("ping").build();
+        let _ = bus.send(msg).await;
+        let history = bus.history().await;
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].message.to, "h_cap");
+    }
+
+    #[tokio::test]
+    async fn test_get_capability() {
+        let bus = MessageBus::new();
+        bus.register(Arc::new(MockCapability {
+            name: "get_cap".into(),
+        }))
+        .await;
+        let cap = bus.get_capability("get_cap").await;
+        assert!(cap.is_some());
+        assert_eq!(cap.unwrap().name(), "get_cap");
+    }
+
+    #[tokio::test]
+    async fn test_introspect() {
+        let bus = MessageBus::new();
+        bus.register(Arc::new(MockCapability {
+            name: "intro_cap".into(),
+        }))
+        .await;
+        let info = bus.introspect().await;
+        assert_eq!(info.len(), 1);
+        assert_eq!(info[0].name, "intro_cap");
+        assert!(info[0].actions.contains(&"ping".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_default() {
+        let bus = MessageBus::default();
+        assert!(bus.list_capabilities().await.is_empty());
+    }
+}

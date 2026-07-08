@@ -114,12 +114,13 @@ impl Capability for FsCapability {
                     });
                 }
 
-                let bytes = tokio::fs::read(&input.path)
-                    .await
-                    .map_err(|e| MessageError::Internal {
-                        capability: "fs".into(),
-                        detail: format!("读取失败: {}", e),
-                    })?;
+                let bytes =
+                    tokio::fs::read(&input.path)
+                        .await
+                        .map_err(|e| MessageError::Internal {
+                            capability: "fs".into(),
+                            detail: format!("读取失败: {}", e),
+                        })?;
 
                 let content = match input.encoding.as_deref() {
                     Some("base64") => {
@@ -149,12 +150,12 @@ impl Capability for FsCapability {
 
                 if let Some(parent) = path.parent() {
                     if !parent.exists() {
-                        tokio::fs::create_dir_all(parent)
-                            .await
-                            .map_err(|e| MessageError::Internal {
+                        tokio::fs::create_dir_all(parent).await.map_err(|e| {
+                            MessageError::Internal {
                                 capability: "fs".into(),
                                 detail: format!("创建目录失败: {}", e),
-                            })?;
+                            }
+                        })?;
                     }
                 }
 
@@ -207,12 +208,12 @@ impl Capability for FsCapability {
                 let created = if path.exists() {
                     false
                 } else {
-                    tokio::fs::create_dir_all(&input.path)
-                        .await
-                        .map_err(|e| MessageError::Internal {
+                    tokio::fs::create_dir_all(&input.path).await.map_err(|e| {
+                        MessageError::Internal {
                             capability: "fs".into(),
                             detail: format!("创建目录失败: {}", e),
-                        })?;
+                        }
+                    })?;
                     true
                 };
 
@@ -241,24 +242,23 @@ impl Capability for FsCapability {
                 }
 
                 let mut entries = Vec::new();
-                let mut dir = tokio::fs::read_dir(&input.path)
-                    .await
-                    .map_err(|e| MessageError::Internal {
-                        capability: "fs".into(),
-                        detail: format!("读取目录失败: {}", e),
-                    })?;
+                let mut dir =
+                    tokio::fs::read_dir(&input.path)
+                        .await
+                        .map_err(|e| MessageError::Internal {
+                            capability: "fs".into(),
+                            detail: format!("读取目录失败: {}", e),
+                        })?;
 
-                while let Some(entry) = dir.next_entry().await.map_err(|e| {
-                    MessageError::Internal {
+                while let Some(entry) =
+                    dir.next_entry().await.map_err(|e| MessageError::Internal {
                         capability: "fs".into(),
                         detail: format!("遍历目录失败: {}", e),
-                    }
-                })? {
-                    let metadata = entry.metadata().await.map_err(|e| {
-                        MessageError::Internal {
-                            capability: "fs".into(),
-                            detail: format!("读取元数据失败: {}", e),
-                        }
+                    })?
+                {
+                    let metadata = entry.metadata().await.map_err(|e| MessageError::Internal {
+                        capability: "fs".into(),
+                        detail: format!("读取元数据失败: {}", e),
                     })?;
                     entries.push(FsEntry {
                         name: entry.file_name().to_string_lossy().to_string(),
@@ -267,11 +267,12 @@ impl Capability for FsCapability {
                     });
                 }
 
-                entries.sort_by(|a, b| {
-                    b.is_dir.cmp(&a.is_dir).then(a.name.cmp(&b.name))
-                });
+                entries.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then(a.name.cmp(&b.name)));
 
-                let output = FsListOutput { path: input.path, entries };
+                let output = FsListOutput {
+                    path: input.path,
+                    entries,
+                };
 
                 Ok(Message::builder()
                     .from("fs")
@@ -286,26 +287,29 @@ impl Capability for FsCapability {
                 let path = std::path::Path::new(&input.path);
 
                 let deleted = if path.is_dir() {
-                    tokio::fs::remove_dir_all(&input.path)
-                        .await
-                        .map_err(|e| MessageError::Internal {
+                    tokio::fs::remove_dir_all(&input.path).await.map_err(|e| {
+                        MessageError::Internal {
                             capability: "fs".into(),
                             detail: format!("删除目录失败: {}", e),
-                        })?;
+                        }
+                    })?;
                     true
                 } else if path.exists() {
-                    tokio::fs::remove_file(&input.path)
-                        .await
-                        .map_err(|e| MessageError::Internal {
+                    tokio::fs::remove_file(&input.path).await.map_err(|e| {
+                        MessageError::Internal {
                             capability: "fs".into(),
                             detail: format!("删除文件失败: {}", e),
-                        })?;
+                        }
+                    })?;
                     true
                 } else {
                     false
                 };
 
-                let output = FsDeleteOutput { path: input.path, deleted };
+                let output = FsDeleteOutput {
+                    path: input.path,
+                    deleted,
+                };
 
                 Ok(Message::builder()
                     .from("fs")
@@ -320,12 +324,12 @@ impl Capability for FsCapability {
 
                 if let Some(parent) = std::path::Path::new(&input.to).parent() {
                     if !parent.exists() {
-                        tokio::fs::create_dir_all(parent)
-                            .await
-                            .map_err(|e| MessageError::Internal {
+                        tokio::fs::create_dir_all(parent).await.map_err(|e| {
+                            MessageError::Internal {
                                 capability: "fs".into(),
                                 detail: format!("创建目标目录失败: {}", e),
-                            })?;
+                            }
+                        })?;
                     }
                 }
 

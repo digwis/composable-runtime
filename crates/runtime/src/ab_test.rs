@@ -107,8 +107,7 @@ impl ABTester {
         let old_stats = CapabilityStats::from_results(&old_results);
         let new_stats = CapabilityStats::from_results(&new_results);
 
-        let (winner, confidence, recommendation) =
-            self.evaluate(&old_stats, &new_stats);
+        let (winner, confidence, recommendation) = self.evaluate(&old_stats, &new_stats);
 
         ABTestResult {
             winner,
@@ -158,9 +157,7 @@ impl ABTester {
         };
 
         let recommendation = match &winner {
-            ABTestWinner::New if confidence >= self.min_confidence => {
-                ABTestRecommendation::Promote
-            }
+            ABTestWinner::New if confidence >= self.min_confidence => ABTestRecommendation::Promote,
             ABTestWinner::New => ABTestRecommendation::Keep, // 有改善但不够确信
             ABTestWinner::Tie => ABTestRecommendation::Keep,
             ABTestWinner::Old if confidence >= self.min_confidence => {

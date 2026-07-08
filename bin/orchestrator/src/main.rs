@@ -1,14 +1,14 @@
-use clap::{Parser, Subcommand};
 use capabilities::{
-    CodeCapability, ComputeCapability, FsCapability, GreetCapability,
-    HttpCapability, ShellCapability, StoreCapability, WebCapability,
+    CodeCapability, ComputeCapability, FsCapability, GreetCapability, HttpCapability,
+    ShellCapability, StoreCapability, WebCapability,
 };
+use clap::{Parser, Subcommand};
 use runtime::{
-    Agent, LlmExecutor, MessageBus, McpServer, OrchestratorBuilder, Platform, RegistryBuilder, Workflow,
-    Daemon, DaemonConfig, discover_llm_backends,
+    discover_llm_backends, Agent, Daemon, DaemonConfig, LlmExecutor, McpServer, MessageBus,
+    OrchestratorBuilder, Platform, RegistryBuilder, Workflow,
 };
-use std::path::PathBuf;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 #[derive(Parser)]
@@ -248,11 +248,17 @@ async fn register_genomes(agent: &Agent) {
             let bus = agent.orchestrator().bus().clone();
             let genomes: Vec<_> = evo.genomes().values().cloned().collect();
             for genome in &genomes {
-                if genome.actions.is_empty() { continue; }
+                if genome.actions.is_empty() {
+                    continue;
+                }
                 let cap = runtime::ScriptedCapability::from_genome(genome.clone())
                     .with_llm(llm.clone())
                     .with_bus(bus.clone());
-                agent.orchestrator().bus().register(std::sync::Arc::new(cap)).await;
+                agent
+                    .orchestrator()
+                    .bus()
+                    .register(std::sync::Arc::new(cap))
+                    .await;
             }
         }
     }
@@ -278,16 +284,19 @@ async fn main() -> anyhow::Result<()> {
             }
 
             let bus = build_registry();
-            let orchestrator = OrchestratorBuilder::new()
-                .with_bus(bus)
-                .build();
+            let orchestrator = OrchestratorBuilder::new().with_bus(bus).build();
 
             let result = orchestrator.run(&wf).await?;
 
             let status_icon = if result.success { "✅" } else { "⚠️" };
-            println!("{} 执行完成: {} 步执行, {} 步跳过, {} 步失败, {} 步重试\n",
-                status_icon, result.steps_executed, result.steps_skipped,
-                result.steps_failed, result.steps_retried);
+            println!(
+                "{} 执行完成: {} 步执行, {} 步跳过, {} 步失败, {} 步重试\n",
+                status_icon,
+                result.steps_executed,
+                result.steps_skipped,
+                result.steps_failed,
+                result.steps_retried
+            );
 
             if verbose {
                 println!("── 步骤输出 ──");
@@ -299,14 +308,20 @@ async fn main() -> anyhow::Result<()> {
                     };
                     match &output.result {
                         Ok(payload) => {
-                            println!("  [{}] {}.{}{} → {}",
-                                output.step, output.capability, output.action,
+                            println!(
+                                "  [{}] {}.{}{} → {}",
+                                output.step,
+                                output.capability,
+                                output.action,
                                 retry_info,
-                                serde_json::to_string_pretty(payload)?);
+                                serde_json::to_string_pretty(payload)?
+                            );
                         }
                         Err(e) => {
-                            println!("  [{}] {}.{}{} → ❌ {}",
-                                output.step, output.capability, output.action, retry_info, e);
+                            println!(
+                                "  [{}] {}.{}{} → ❌ {}",
+                                output.step, output.capability, output.action, retry_info, e
+                            );
                         }
                     }
                 }
@@ -322,11 +337,13 @@ async fn main() -> anyhow::Result<()> {
             if !history.is_empty() {
                 println!("\n── 消息流转 ──");
                 for log in &history {
-                    println!("  {} → {} ({}) [{}]",
+                    println!(
+                        "  {} → {} ({}) [{}]",
                         log.message.from.as_deref().unwrap_or("?"),
                         log.message.to,
                         log.message.action,
-                        log.result);
+                        log.result
+                    );
                 }
             }
         }
@@ -353,7 +370,11 @@ async fn main() -> anyhow::Result<()> {
             }
         }
 
-        Commands::Send { to, action, payload } => {
+        Commands::Send {
+            to,
+            action,
+            payload,
+        } => {
             let bus = build_registry();
             let payload: serde_json::Value = serde_json::from_str(&payload)?;
             let msg = runtime::Message::builder()
@@ -367,7 +388,10 @@ async fn main() -> anyhow::Result<()> {
             println!("\n📨 响应:");
             println!("  from: {}", response.from.as_deref().unwrap_or("?"));
             println!("  action: {}", response.action);
-            println!("  payload: {}\n", serde_json::to_string_pretty(&response.payload)?);
+            println!(
+                "  payload: {}\n",
+                serde_json::to_string_pretty(&response.payload)?
+            );
         }
 
         Commands::History { workflow: _ } => {
@@ -376,9 +400,7 @@ async fn main() -> anyhow::Result<()> {
 
         Commands::Exec { json } => {
             let bus = build_registry();
-            let orchestrator = OrchestratorBuilder::new()
-                .with_bus(bus)
-                .build();
+            let orchestrator = OrchestratorBuilder::new().with_bus(bus).build();
 
             let json_value: serde_json::Value = serde_json::from_str(&json)?;
             let context: HashMap<String, serde_json::Value> = HashMap::new();
@@ -391,22 +413,37 @@ async fn main() -> anyhow::Result<()> {
                     println!("  错误: {}\n", e);
                 }
             } else {
-                println!("\n✅ 动态执行成功{}", if retries > 0 { format!(" (重试 {} 次)", retries) } else { String::new() });
+                println!(
+                    "\n✅ 动态执行成功{}",
+                    if retries > 0 {
+                        format!(" (重试 {} 次)", retries)
+                    } else {
+                        String::new()
+                    }
+                );
                 if let Ok(payload) = &output.result {
-                    println!("  [{}] {}.{} → {}\n",
-                        output.step, output.capability, output.action,
-                        serde_json::to_string_pretty(payload)?);
+                    println!(
+                        "  [{}] {}.{} → {}\n",
+                        output.step,
+                        output.capability,
+                        output.action,
+                        serde_json::to_string_pretty(payload)?
+                    );
                 }
             }
         }
 
-        Commands::Agent { task, max_iterations, model, base_url, evolve } => {
+        Commands::Agent {
+            task,
+            max_iterations,
+            model,
+            base_url,
+            evolve,
+        } => {
             let api_key = get_api_key(&base_url);
 
             let bus = build_registry();
-            let orchestrator = OrchestratorBuilder::new()
-                .with_bus(bus)
-                .build();
+            let orchestrator = OrchestratorBuilder::new().with_bus(bus).build();
 
             let mut agent = Agent::new(orchestrator, api_key)
                 .with_max_iterations(max_iterations)
@@ -422,12 +459,25 @@ async fn main() -> anyhow::Result<()> {
             println!("════════════════════════════════");
             println!("🤖 Agent 结果:");
             println!("   任务: {}", result.task);
-            println!("   成功: {}", if result.success { "✅ 是" } else { "❌ 否" });
+            println!(
+                "   成功: {}",
+                if result.success { "✅ 是" } else { "❌ 否" }
+            );
             println!("   迭代: {}", result.iterations);
             println!("   步骤: {}", result.outputs.len());
-            println!("   学习: {}", if result.learned { "🧠 已保存工作流模板" } else { "无" });
+            println!(
+                "   学习: {}",
+                if result.learned {
+                    "🧠 已保存工作流模板"
+                } else {
+                    "无"
+                }
+            );
             if !result.capabilities_created.is_empty() {
-                println!("   🧬 创造/变异能力: {}", result.capabilities_created.join(", "));
+                println!(
+                    "   🧬 创造/变异能力: {}",
+                    result.capabilities_created.join(", ")
+                );
             }
             if !result.summary.is_empty() {
                 println!("   总结: {}", result.summary);
@@ -455,13 +505,15 @@ async fn main() -> anyhow::Result<()> {
             println!();
         }
 
-        Commands::AutoEvolve { model, base_url, rounds } => {
+        Commands::AutoEvolve {
+            model,
+            base_url,
+            rounds,
+        } => {
             let api_key = get_api_key(&base_url);
 
             let bus = build_registry();
-            let orchestrator = OrchestratorBuilder::new()
-                .with_bus(bus)
-                .build();
+            let orchestrator = OrchestratorBuilder::new().with_bus(bus).build();
 
             let mut agent = Agent::new(orchestrator, api_key)
                 .with_model(model)
@@ -480,11 +532,8 @@ async fn main() -> anyhow::Result<()> {
 
                 if let Some(evo) = agent.evolution_mut() {
                     if let Some(llm) = &llm {
-                        let mut auto = runtime::AutoEvolver::new(
-                            llm.clone(),
-                            bus.clone(),
-                            platform.clone(),
-                        );
+                        let mut auto =
+                            runtime::AutoEvolver::new(llm.clone(), bus.clone(), platform.clone());
                         match auto.evolve_once(evo).await {
                             Ok(actions) => {
                                 if actions.is_empty() {
@@ -512,13 +561,17 @@ async fn main() -> anyhow::Result<()> {
             println!();
         }
 
-        Commands::EvolveContinuous { model, base_url, max_rounds, idle_threshold, interval } => {
+        Commands::EvolveContinuous {
+            model,
+            base_url,
+            max_rounds,
+            idle_threshold,
+            interval,
+        } => {
             let api_key = get_api_key(&base_url);
 
             let bus = build_registry();
-            let orchestrator = OrchestratorBuilder::new()
-                .with_bus(bus)
-                .build();
+            let orchestrator = OrchestratorBuilder::new().with_bus(bus).build();
 
             let mut agent = Agent::new(orchestrator, api_key)
                 .with_model(model)
@@ -533,12 +586,9 @@ async fn main() -> anyhow::Result<()> {
 
             if let Some(evo) = agent.evolution_mut() {
                 if let Some(llm) = &llm {
-                    let mut auto = runtime::AutoEvolver::new(
-                        llm.clone(),
-                        bus,
-                        platform,
-                    );
-                    auto.evolve_continuous(evo, max_rounds, idle_threshold, interval).await
+                    let mut auto = runtime::AutoEvolver::new(llm.clone(), bus, platform);
+                    auto.evolve_continuous(evo, max_rounds, idle_threshold, interval)
+                        .await
                         .map_err(|e| anyhow::anyhow!("{}", e))?;
                 }
             }
@@ -548,13 +598,17 @@ async fn main() -> anyhow::Result<()> {
             }
         }
 
-        Commands::EvolveGoal { goal, model, base_url, max_rounds, interval } => {
+        Commands::EvolveGoal {
+            goal,
+            model,
+            base_url,
+            max_rounds,
+            interval,
+        } => {
             let api_key = get_api_key(&base_url);
 
             let bus = build_registry();
-            let orchestrator = OrchestratorBuilder::new()
-                .with_bus(bus)
-                .build();
+            let orchestrator = OrchestratorBuilder::new().with_bus(bus).build();
 
             let mut agent = Agent::new(orchestrator, api_key)
                 .with_model(model)
@@ -569,12 +623,9 @@ async fn main() -> anyhow::Result<()> {
 
             if let Some(evo) = agent.evolution_mut() {
                 if let Some(llm) = &llm {
-                    let mut auto = runtime::AutoEvolver::new(
-                        llm.clone(),
-                        bus,
-                        platform,
-                    );
-                    auto.evolve_towards(evo, &goal, max_rounds, interval).await
+                    let mut auto = runtime::AutoEvolver::new(llm.clone(), bus, platform);
+                    auto.evolve_towards(evo, &goal, max_rounds, interval)
+                        .await
                         .map_err(|e| anyhow::anyhow!("{}", e))?;
                 }
             }
@@ -584,14 +635,19 @@ async fn main() -> anyhow::Result<()> {
             }
         }
 
-        Commands::Mcp { model, base_url, storage } => {
+        Commands::Mcp {
+            model,
+            base_url,
+            storage,
+        } => {
             let api_key = get_api_key(&base_url);
 
             // 平台探测 + 存储目录（与 CLI 共享 genomes.json）
             let platform = Platform::detect();
             let storage_dir = storage.unwrap_or_else(|| PathBuf::from(platform.storage_dir()));
-            std::fs::create_dir_all(&storage_dir)
-                .map_err(|e| anyhow::anyhow!("创建存储目录失败: {}: {}", storage_dir.display(), e))?;
+            std::fs::create_dir_all(&storage_dir).map_err(|e| {
+                anyhow::anyhow!("创建存储目录失败: {}: {}", storage_dir.display(), e)
+            })?;
 
             // 构建 LLM 执行器（行为与 CLI 完全一致）
             let llm = Arc::new(LlmExecutor::new(api_key, base_url));
@@ -602,20 +658,26 @@ async fn main() -> anyhow::Result<()> {
 
             tracing::info!(
                 "MCP server 启动: storage={}, model={}, native capabilities={}",
-                storage_dir.display(), model, native_count
+                storage_dir.display(),
+                model,
+                native_count
             );
 
-            let server = McpServer::new(
-                llm,
-                bus,
-                platform,
-                storage_dir,
-            );
+            let server = McpServer::new(llm, bus, platform, storage_dir);
 
-            server.run().await.map_err(|e| anyhow::anyhow!("MCP server 错误: {}", e))?;
+            server
+                .run()
+                .await
+                .map_err(|e| anyhow::anyhow!("MCP server 错误: {}", e))?;
         }
 
-        Commands::Daemon { model, base_url, storage, interval, max_rounds } => {
+        Commands::Daemon {
+            model,
+            base_url,
+            storage,
+            interval,
+            max_rounds,
+        } => {
             let api_key = get_api_key(&base_url);
 
             // 设置默认模型供运行时内部使用
@@ -623,17 +685,25 @@ async fn main() -> anyhow::Result<()> {
 
             // 多模型路由配置（可通过环境变量覆盖）
             let fast_model = std::env::var("ORCH_MODEL_FAST").unwrap_or_else(|_| model.clone());
-            let smart_model = std::env::var("ORCH_MODEL_SMART").unwrap_or_else(|_| "MiniMax-M3".to_string());
-            let coder_model = std::env::var("ORCH_MODEL_CODER").unwrap_or_else(|_| "MiniMax-M3".to_string());
+            let smart_model =
+                std::env::var("ORCH_MODEL_SMART").unwrap_or_else(|_| "MiniMax-M3".to_string());
+            let coder_model =
+                std::env::var("ORCH_MODEL_CODER").unwrap_or_else(|_| "MiniMax-M3".to_string());
             println!("🧬 多模型路由配置:");
             println!("  fast (测试输入/简单任务): {}", fast_model);
             println!("  smart (归因分析/目标生成): {}", smart_model);
             println!("  coder (代码生成/变异):    {}", coder_model);
 
             let platform = Platform::detect();
-            let storage_dir = storage.unwrap_or_else(|| PathBuf::from(format!("{}/.orch", std::env::var("HOME").unwrap_or_else(|_| "/tmp".into()))));
-            std::fs::create_dir_all(&storage_dir)
-                .map_err(|e| anyhow::anyhow!("创建存储目录失败: {}: {}", storage_dir.display(), e))?;
+            let storage_dir = storage.unwrap_or_else(|| {
+                PathBuf::from(format!(
+                    "{}/.orch",
+                    std::env::var("HOME").unwrap_or_else(|_| "/tmp".into())
+                ))
+            });
+            std::fs::create_dir_all(&storage_dir).map_err(|e| {
+                anyhow::anyhow!("创建存储目录失败: {}: {}", storage_dir.display(), e)
+            })?;
 
             // 构建 LLM 执行器
             let llm = Arc::new(LlmExecutor::new(api_key, base_url));
@@ -654,7 +724,10 @@ async fn main() -> anyhow::Result<()> {
                     if let Ok(content) = std::fs::read_to_string(&local_genomes) {
                         if content.trim() != "[]" && !content.trim().is_empty() {
                             std::fs::write(&target_genomes, &content).ok();
-                            println!("📦 从项目级复制 genomes.json 到 {}", target_genomes.display());
+                            println!(
+                                "📦 从项目级复制 genomes.json 到 {}",
+                                target_genomes.display()
+                            );
                         }
                     }
                 }
@@ -675,8 +748,16 @@ async fn main() -> anyhow::Result<()> {
             let backends = discover_llm_backends();
             println!("🔍 已发现 LLM 后端:");
             for b in &backends {
-                println!("   • {} ({:?}) {}", b.name, b.backend_type,
-                    if !b.command.is_empty() { format!("→ {}", b.command) } else { String::new() });
+                println!(
+                    "   • {} ({:?}) {}",
+                    b.name,
+                    b.backend_type,
+                    if !b.command.is_empty() {
+                        format!("→ {}", b.command)
+                    } else {
+                        String::new()
+                    }
+                );
             }
 
             // 构建消息总线 + 注册原生能力
@@ -690,13 +771,25 @@ async fn main() -> anyhow::Result<()> {
             println!("\n   按 Ctrl+C 停止\n");
 
             let mut daemon = Daemon::new(config, bus, evolution, Some(llm), platform);
-            daemon.run().await.map_err(|e| anyhow::anyhow!("Daemon 错误: {}", e))?;
+            daemon
+                .run()
+                .await
+                .map_err(|e| anyhow::anyhow!("Daemon 错误: {}", e))?;
         }
 
-        Commands::Autonomous { base_url, model, storage } => {
+        Commands::Autonomous {
+            base_url,
+            model,
+            storage,
+        } => {
             let api_key = get_api_key(&base_url);
             let platform = Platform::detect();
-            let storage_dir = storage.unwrap_or_else(|| PathBuf::from(format!("{}/.orch", std::env::var("HOME").unwrap_or_else(|_| "/tmp".into()))));
+            let storage_dir = storage.unwrap_or_else(|| {
+                PathBuf::from(format!(
+                    "{}/.orch",
+                    std::env::var("HOME").unwrap_or_else(|_| "/tmp".into())
+                ))
+            });
 
             // 设置默认模型供运行时内部使用（LlmExecutor execute_openai 会读取 ORCH_MODEL）
             std::env::set_var("ORCH_MODEL", &model);
@@ -715,7 +808,10 @@ async fn main() -> anyhow::Result<()> {
                     if let Ok(content) = std::fs::read_to_string(&local_genomes) {
                         if content.trim() != "[]" && !content.trim().is_empty() {
                             std::fs::write(&target_genomes, &content).ok();
-                            println!("📦 从项目级复制 genomes.json 到 {}", target_genomes.display());
+                            println!(
+                                "📦 从项目级复制 genomes.json 到 {}",
+                                target_genomes.display()
+                            );
                         }
                     }
                 }
@@ -778,7 +874,10 @@ async fn main() -> anyhow::Result<()> {
                     if result.success {
                         println!("   ✅ 成功 ({}ms)", result.elapsed_ms);
                         if let Some(output) = result.output.get("result") {
-                            println!("   结果: {}", serde_json::to_string_pretty(output).unwrap_or_default());
+                            println!(
+                                "   结果: {}",
+                                serde_json::to_string_pretty(output).unwrap_or_default()
+                            );
                         }
                     } else {
                         println!("   ❌ 失败: {}", result.error.as_deref().unwrap_or("未知"));

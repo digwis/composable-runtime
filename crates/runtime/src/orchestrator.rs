@@ -82,14 +82,16 @@ impl Default for OrchestratorBuilder {
 
 impl Orchestrator {
     pub fn new(bus: MessageBus) -> Self {
-        Self {
-            bus: Arc::new(bus),
-        }
+        Self { bus: Arc::new(bus) }
     }
 
     /// 执行工作流
     pub async fn run(&self, workflow: &Workflow) -> Result<OrchestratorResult, MessageError> {
-        tracing::info!("开始执行工作流: {} ({} 条目)", workflow.name, workflow.steps.len());
+        tracing::info!(
+            "开始执行工作流: {} ({} 条目)",
+            workflow.name,
+            workflow.steps.len()
+        );
 
         let mut context: HashMap<String, serde_json::Value> = HashMap::new();
         let mut outputs = Vec::new();
@@ -111,7 +113,8 @@ impl Orchestrator {
                         }
                     }
 
-                    let (output, retried, _failed) = self.execute_step(step, &workflow.name, &context).await;
+                    let (output, retried, _failed) =
+                        self.execute_step(step, &workflow.name, &context).await;
                     steps_retried += retried as usize;
 
                     let mut should_stop = false;
@@ -136,7 +139,11 @@ impl Orchestrator {
                                     None
                                 }
                                 ErrorStrategy::Record => {
-                                    tracing::warn!("步骤 '{}' 失败，记录错误继续: {}", step.name, e);
+                                    tracing::warn!(
+                                        "步骤 '{}' 失败，记录错误继续: {}",
+                                        step.name,
+                                        e
+                                    );
                                     context.insert(
                                         step.name.clone(),
                                         serde_json::json!({"error": e, "step": &step.name}),
@@ -203,16 +210,20 @@ impl Orchestrator {
 
                     // 将并行组结果汇总存入上下文
                     let group_summary: serde_json::Value = serde_json::to_value(
-                        group_outputs.iter().map(|o| {
-                            serde_json::json!({
-                                "step": &o.step,
-                                "result": match &o.result {
-                                    Ok(v) => v.clone(),
-                                    Err(e) => serde_json::json!({"error": e}),
-                                }
+                        group_outputs
+                            .iter()
+                            .map(|o| {
+                                serde_json::json!({
+                                    "step": &o.step,
+                                    "result": match &o.result {
+                                        Ok(v) => v.clone(),
+                                        Err(e) => serde_json::json!({"error": e}),
+                                    }
+                                })
                             })
-                        }).collect::<Vec<_>>(),
-                    ).unwrap_or(serde_json::Value::Null);
+                            .collect::<Vec<_>>(),
+                    )
+                    .unwrap_or(serde_json::Value::Null);
                     context.insert(group.name.clone(), group_summary);
 
                     outputs.extend(group_outputs);
@@ -222,7 +233,11 @@ impl Orchestrator {
 
         tracing::info!(
             "工作流 '{}' 完成: {} 步执行, {} 步跳过, {} 步失败, {} 步重试",
-            workflow.name, steps_executed, steps_skipped, steps_failed, steps_retried
+            workflow.name,
+            steps_executed,
+            steps_skipped,
+            steps_failed,
+            steps_retried
         );
 
         Ok(OrchestratorResult {
@@ -269,13 +284,11 @@ impl Orchestrator {
                     .collect();
                 serde_json::Value::Object(new_map)
             }
-            serde_json::Value::Array(arr) => {
-                serde_json::Value::Array(
-                    arr.iter()
-                        .map(|v| self.resolve_variables(v, context))
-                        .collect(),
-                )
-            }
+            serde_json::Value::Array(arr) => serde_json::Value::Array(
+                arr.iter()
+                    .map(|v| self.resolve_variables(v, context))
+                    .collect(),
+            ),
             _ => value.clone(),
         }
     }
@@ -335,7 +348,7 @@ impl Orchestrator {
                         Some(serde_json::Value::Bool(b)) => {
                             right == "true" && *b || right == "false" && !*b
                         }
-                        Some(v) => v.to_string() == right,
+                        Some(v) => *v == right,
                         None => false,
                     }
                 }
@@ -454,7 +467,7 @@ async fn execute_step_with_retry(
             .payload(resolved_input.clone())
             .metadata("workflow", workflow_name)
             .metadata("step", &step.name)
-            .metadata("attempt", &attempt.to_string())
+            .metadata("attempt", attempt.to_string())
             .build();
 
         let send_future = bus.send(msg);
@@ -488,12 +501,7 @@ async fn execute_step_with_retry(
             }
             Err(e) => {
                 last_error = e.to_string();
-                tracing::warn!(
-                    "步骤 '{}' 第 {} 次尝试失败: {}",
-                    step.name,
-                    attempt + 1,
-                    e
-                );
+                tracing::warn!("步骤 '{}' 第 {} 次尝试失败: {}", step.name, attempt + 1, e);
             }
         }
     }
@@ -527,4 +535,294 @@ fn parse_condition(expr: &str) -> Option<(String, String, String)> {
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::capability::Capability;
+    use crate::message::{Message, MessageResult};
+
+    struct EchoCap;
+    #[async_trait::async_trait]
+    impl Capability for EchoCap {
+        fn name(&self) -> &str {
+            "echo"
+        }
+        fn actions(&self) -> Vec<&str> {
+            vec!["echo"]
+        }
+        async fn handle(&self, msg: &Message) -> MessageResult {
+            Ok(Message::builder()
+                .from("echo")
+                .to(msg.from.as_deref().unwrap_or("caller"))
+                .action("echo_resp")
+                .payload(msg.payload.clone())
+                .build())
+        }
+    }
+
+    async fn make_orchestrator() -> Orchestrator {
+        let bus = MessageBus::new();
+        bus.register(Arc::new(EchoCap)).await;
+        Orchestrator::new(bus)
+    }
+
+    #[test]
+    fn test_parse_condition_eq() {
+        let (left, op, right) = parse_condition("context.x == \"hello\"").unwrap();
+        assert_eq!(left, "x");
+        assert_eq!(op, "==");
+        assert_eq!(right, "\"hello\"");
+    }
+
+    #[test]
+    fn test_parse_condition_neq() {
+        let (left, op, right) = parse_condition("context.y != null").unwrap();
+        assert_eq!(left, "y");
+        assert_eq!(op, "!=");
+        assert_eq!(right, "null");
+    }
+
+    #[test]
+    fn test_parse_condition_gt() {
+        let (_, op, _) = parse_condition("context.count > 5").unwrap();
+        assert_eq!(op, ">");
+    }
+
+    #[test]
+    fn test_parse_condition_gte() {
+        let (_, op, _) = parse_condition("context.count >= 5").unwrap();
+        assert_eq!(op, ">=");
+    }
+
+    #[test]
+    fn test_parse_condition_no_op() {
+        assert!(parse_condition("just text").is_none());
+    }
+
+    #[test]
+    fn test_parse_condition_strips_context_prefix() {
+        let (left, _, _) = parse_condition("context.foo == 1").unwrap();
+        assert_eq!(left, "foo");
+    }
+
+    #[tokio::test]
+    async fn test_resolve_variables_string() {
+        let orch = make_orchestrator().await;
+        let mut ctx = HashMap::new();
+        ctx.insert("step1".into(), serde_json::json!({"result": "ok"}));
+        let val = orch.resolve_variables(&serde_json::json!("${step1.result}"), &ctx);
+        assert_eq!(val, serde_json::json!("ok"));
+    }
+
+    #[tokio::test]
+    async fn test_resolve_variables_object() {
+        let orch = make_orchestrator().await;
+        let mut ctx = HashMap::new();
+        ctx.insert("s1".into(), serde_json::json!({"x": 10}));
+        let val = orch.resolve_variables(
+            &serde_json::json!({"data": "${s1.x}", "static": "hello"}),
+            &ctx,
+        );
+        assert_eq!(val["data"], 10);
+        assert_eq!(val["static"], "hello");
+    }
+
+    #[tokio::test]
+    async fn test_resolve_variables_no_ref() {
+        let orch = make_orchestrator().await;
+        let ctx = HashMap::new();
+        let val = orch.resolve_variables(&serde_json::json!("plain text"), &ctx);
+        assert_eq!(val, serde_json::json!("plain text"));
+    }
+
+    #[tokio::test]
+    async fn test_resolve_variables_array() {
+        let orch = make_orchestrator().await;
+        let mut ctx = HashMap::new();
+        ctx.insert("s1".into(), serde_json::json!({"val": "found"}));
+        let val = orch.resolve_variables(&serde_json::json!(["${s1.val}", "static"]), &ctx);
+        assert_eq!(val[0], "found");
+        assert_eq!(val[1], "static");
+    }
+
+    #[tokio::test]
+    async fn test_resolve_ref_nested() {
+        let orch = make_orchestrator().await;
+        let mut ctx = HashMap::new();
+        ctx.insert("s1".into(), serde_json::json!({"a": {"b": {"c": 42}}}));
+        let val = orch.resolve_ref("s1.a.b.c", &ctx);
+        assert_eq!(val, Some(serde_json::json!(42)));
+    }
+
+    #[tokio::test]
+    async fn test_resolve_ref_missing() {
+        let orch = make_orchestrator().await;
+        let ctx = HashMap::new();
+        assert!(orch.resolve_ref("no_such", &ctx).is_none());
+    }
+
+    #[tokio::test]
+    async fn test_resolve_ref_array_index() {
+        let orch = make_orchestrator().await;
+        let mut ctx = HashMap::new();
+        ctx.insert("arr".into(), serde_json::json!([10, 20, 30]));
+        assert_eq!(orch.resolve_ref("arr.1", &ctx), Some(serde_json::json!(20)));
+    }
+
+    #[tokio::test]
+    async fn test_evaluate_condition_eq_string() {
+        let orch = make_orchestrator().await;
+        let mut ctx = HashMap::new();
+        ctx.insert("status".into(), serde_json::json!("done"));
+        assert!(orch.evaluate_condition(
+            &StepCondition::Expr("context.status == \"done\"".into()),
+            &ctx
+        ));
+        assert!(!orch.evaluate_condition(
+            &StepCondition::Expr("context.status == \"pending\"".into()),
+            &ctx
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_evaluate_condition_neq_null() {
+        let orch = make_orchestrator().await;
+        let mut ctx = HashMap::new();
+        ctx.insert("val".into(), serde_json::json!(42));
+        assert!(orch.evaluate_condition(&StepCondition::Expr("context.val != null".into()), &ctx));
+    }
+
+    #[tokio::test]
+    async fn test_evaluate_condition_numeric_gt() {
+        let orch = make_orchestrator().await;
+        let mut ctx = HashMap::new();
+        ctx.insert("count".into(), serde_json::json!(10));
+        assert!(orch.evaluate_condition(&StepCondition::Expr("context.count > 5".into()), &ctx));
+        assert!(!orch.evaluate_condition(&StepCondition::Expr("context.count > 20".into()), &ctx));
+    }
+
+    #[tokio::test]
+    async fn test_evaluate_condition_numeric_gte() {
+        let orch = make_orchestrator().await;
+        let mut ctx = HashMap::new();
+        ctx.insert("count".into(), serde_json::json!(5));
+        assert!(orch.evaluate_condition(&StepCondition::Expr("context.count >= 5".into()), &ctx));
+    }
+
+    #[tokio::test]
+    async fn test_evaluate_condition_bool() {
+        let orch = make_orchestrator().await;
+        let mut ctx = HashMap::new();
+        ctx.insert("flag".into(), serde_json::json!(true));
+        assert!(orch.evaluate_condition(&StepCondition::Expr("context.flag == true".into()), &ctx));
+    }
+
+    #[tokio::test]
+    async fn test_evaluate_condition_missing_key() {
+        let orch = make_orchestrator().await;
+        let ctx = HashMap::new();
+        assert!(!orch.evaluate_condition(
+            &StepCondition::Expr("context.missing == \"x\"".into()),
+            &ctx
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_run_workflow_single_step() {
+        let orch = make_orchestrator().await;
+        let wf = Workflow {
+            name: "test_wf".into(),
+            description: "".into(),
+            steps: vec![StepEntry::Single(Step::new(
+                "s1",
+                "echo",
+                "echo",
+                serde_json::json!({"msg": "hello"}),
+            ))],
+        };
+        let result = orch.run(&wf).await.unwrap();
+        assert!(result.success);
+        assert_eq!(result.steps_executed, 1);
+        assert_eq!(result.context["s1"]["msg"], "hello");
+    }
+
+    #[tokio::test]
+    async fn test_run_workflow_with_condition_skip() {
+        let orch = make_orchestrator().await;
+        let wf = Workflow {
+            name: "cond_wf".into(),
+            description: "".into(),
+            steps: vec![StepEntry::Single(
+                Step::new("s1", "echo", "echo", serde_json::json!({}))
+                    .with_condition("context.skip == \"yes\""),
+            )],
+        };
+        let result = orch.run(&wf).await.unwrap();
+        assert!(result.success);
+        assert_eq!(result.steps_skipped, 1);
+        assert_eq!(result.steps_executed, 0);
+    }
+
+    #[tokio::test]
+    async fn test_run_workflow_unregistered_capability() {
+        let orch = make_orchestrator().await;
+        let wf = Workflow {
+            name: "fail_wf".into(),
+            description: "".into(),
+            steps: vec![StepEntry::Single(Step::new(
+                "s1",
+                "no_such_cap",
+                "act",
+                serde_json::json!({}),
+            ))],
+        };
+        let result = orch.run(&wf).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_run_workflow_continue_on_error() {
+        let orch = make_orchestrator().await;
+        let wf = Workflow {
+            name: "cont_wf".into(),
+            description: "".into(),
+            steps: vec![
+                StepEntry::Single(
+                    Step::new("fail_step", "no_cap", "act", serde_json::json!({}))
+                        .on_error(ErrorStrategy::Continue),
+                ),
+                StepEntry::Single(Step::new("ok_step", "echo", "echo", serde_json::json!({}))),
+            ],
+        };
+        let result = orch.run(&wf).await.unwrap();
+        assert!(!result.success);
+        assert_eq!(result.steps_skipped, 1);
+        assert_eq!(result.steps_executed, 1);
+    }
+
+    #[tokio::test]
+    async fn test_introspect() {
+        let orch = make_orchestrator().await;
+        let info = orch.introspect().await;
+        assert_eq!(info.len(), 1);
+        assert_eq!(info[0].name, "echo");
+    }
+
+    #[tokio::test]
+    async fn test_execute_dynamic() {
+        let orch = make_orchestrator().await;
+        let step = Step::new("dyn", "echo", "echo", serde_json::json!({"x": 1}));
+        let ctx = HashMap::new();
+        let (output, _, _) = orch.execute_dynamic(&step, &ctx).await;
+        assert!(output.result.is_ok());
+        assert_eq!(output.result.as_ref().unwrap()["x"], 1);
+    }
+
+    #[tokio::test]
+    async fn test_builder_default() {
+        let orch = OrchestratorBuilder::new().build();
+        assert!(orch.introspect().await.is_empty());
+    }
 }

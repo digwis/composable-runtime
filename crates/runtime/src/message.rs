@@ -43,8 +43,9 @@ impl Message {
 
     /// 从 JSON 负载中提取类型化数据
     pub fn payload_as<T: for<'de> Deserialize<'de>>(&self) -> Result<T, MessageError> {
-        serde_json::from_value(self.payload.clone())
-            .map_err(|e| MessageError::InvalidPayload { detail: e.to_string() })
+        serde_json::from_value(self.payload.clone()).map_err(|e| MessageError::InvalidPayload {
+            detail: e.to_string(),
+        })
     }
 }
 
@@ -140,7 +141,10 @@ mod tests {
     #[test]
     fn test_message_payload_as() {
         #[derive(Deserialize)]
-        struct Data { name: String, age: u32 }
+        struct Data {
+            name: String,
+            age: u32,
+        }
         let msg = Message::builder()
             .payload(serde_json::json!({"name": "alice", "age": 30}))
             .build();
@@ -155,7 +159,10 @@ mod tests {
             .payload(serde_json::json!({"name": "alice"}))
             .build();
         #[derive(Deserialize)]
-        struct NeedAge { #[allow(dead_code)] age: u32 }
+        struct NeedAge {
+            #[allow(dead_code)]
+            age: u32,
+        }
         let result: Result<NeedAge, _> = msg.payload_as();
         assert!(result.is_err());
     }

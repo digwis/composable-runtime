@@ -106,8 +106,13 @@ impl Daemon {
         self.register_all_capabilities().await;
         self.inject_to_path().await;
 
-        let listener = UnixListener::bind(&self.config.socket_path)
-            .map_err(|e| format!("绑定 socket 失败: {}: {}", self.config.socket_path.display(), e))?;
+        let listener = UnixListener::bind(&self.config.socket_path).map_err(|e| {
+            format!(
+                "绑定 socket 失败: {}: {}",
+                self.config.socket_path.display(),
+                e
+            )
+        })?;
 
         let cap_count = {
             let state = self.shared.lock().await;
@@ -195,7 +200,8 @@ exec orch exec "{}" "{}" "$@"
                 #[cfg(unix)]
                 {
                     use std::os::unix::fs::PermissionsExt;
-                    std::fs::set_permissions(&filepath, std::fs::Permissions::from_mode(0o755)).ok();
+                    std::fs::set_permissions(&filepath, std::fs::Permissions::from_mode(0o755))
+                        .ok();
                 }
                 count += 1;
             }
@@ -233,7 +239,9 @@ exec orch exec "{}" "{}" "$@"
                         let outcomes = match tokio::time::timeout(
                             std::time::Duration::from_secs(300),
                             fd.evolve_from_failures(),
-                        ).await {
+                        )
+                        .await
+                        {
                             Ok(o) => o,
                             Err(_) => {
                                 tracing::warn!("进化循环: 失败驱动超时 (300s)，跳过");
@@ -245,7 +253,8 @@ exec orch exec "{}" "{}" "$@"
                         if total > 0 {
                             tracing::info!(
                                 "进化循环: 失败驱动产生 {} 个能力, {} 个通过验证",
-                                total, passed
+                                total,
+                                passed
                             );
                             for outcome in &outcomes {
                                 if outcome.is_passing() {
@@ -261,26 +270,21 @@ exec orch exec "{}" "{}" "$@"
 
                 // 2. 自省 + 变异（AutoEvolver）
                 if let Some(llm) = &llm {
-                    let mut auto = AutoEvolver::new(
-                        llm.clone(),
-                        bus.clone(),
-                        platform.clone(),
-                    );
+                    let mut auto = AutoEvolver::new(llm.clone(), bus.clone(), platform.clone());
 
                     let mut state = shared.lock().await;
                     tracing::info!("进化循环: 执行自省+变异...");
                     match tokio::time::timeout(
                         std::time::Duration::from_secs(600),
                         auto.evolve_once(&mut state.evolution),
-                    ).await {
+                    )
+                    .await
+                    {
                         Ok(Ok(actions)) => {
                             if actions.is_empty() {
                                 tracing::info!("进化循环: 无需进化动作");
                             } else {
-                                tracing::info!(
-                                    "进化循环: 进化动作: {}",
-                                    actions.join(", ")
-                                );
+                                tracing::info!("进化循环: 进化动作: {}", actions.join(", "));
                                 state.total_evolutions += actions.len() as u64;
                             }
                         }
@@ -295,18 +299,17 @@ exec orch exec "{}" "{}" "$@"
 
                 // 2.5 自主循环 — 感知环境 + 生成目标 + 主动执行
                 if let Some(llm) = &llm {
-                    let mut auto_runtime = AutonomousRuntime::new(
-                        llm.clone(),
-                        bus.clone(),
-                        platform.clone(),
-                    );
+                    let mut auto_runtime =
+                        AutonomousRuntime::new(llm.clone(), bus.clone(), platform.clone());
 
                     let mut state = shared.lock().await;
                     tracing::info!("自主循环: 启动...");
                     let auto_results = match tokio::time::timeout(
                         std::time::Duration::from_secs(300),
                         auto_runtime.autonomous_cycle(&mut state.evolution),
-                    ).await {
+                    )
+                    .await
+                    {
                         Ok(results) => results,
                         Err(_) => {
                             tracing::warn!("自主循环: 超时 (300s)，跳过");
@@ -316,7 +319,9 @@ exec orch exec "{}" "{}" "$@"
                     let (successes, failures) = auto_runtime.stats();
                     tracing::info!(
                         "自主循环: 完成 — {} 个目标, {} 成功, {} 失败",
-                        auto_results.len(), successes, failures
+                        auto_results.len(),
+                        successes,
+                        failures
                     );
                 }
 
@@ -324,8 +329,9 @@ exec orch exec "{}" "{}" "$@"
                 if round % 5 == 0 {
                     if let Some(llm) = &llm {
                         let storage_dir = std::path::PathBuf::from(
-                            std::env::var("HOME").unwrap_or_else(|_| "/tmp".into())
-                        ).join(".orch");
+                            std::env::var("HOME").unwrap_or_else(|_| "/tmp".into()),
+                        )
+                        .join(".orch");
                         let registry = Arc::new(ExecutorRegistry::new(storage_dir.clone()));
                         let meta = MetaEvolver::new(
                             llm.clone(),
@@ -339,7 +345,9 @@ exec orch exec "{}" "{}" "$@"
                         match tokio::time::timeout(
                             std::time::Duration::from_secs(300),
                             meta.meta_evolve_once(&mut state.evolution),
-                        ).await {
+                        )
+                        .await
+                        {
                             Ok(Ok(actions)) => {
                                 if actions.is_empty() {
                                     tracing::info!("元进化: 无需进化动作");
@@ -384,7 +392,11 @@ exec orch exec "{}" "{}" "$@"
                             #[cfg(unix)]
                             {
                                 use std::os::unix::fs::PermissionsExt;
-                                std::fs::set_permissions(&filepath, std::fs::Permissions::from_mode(0o755)).ok();
+                                std::fs::set_permissions(
+                                    &filepath,
+                                    std::fs::Permissions::from_mode(0o755),
+                                )
+                                .ok();
                             }
                         }
                     }
@@ -395,7 +407,7 @@ exec orch exec "{}" "{}" "$@"
                         if genome.actions.is_empty() || !platform.is_compatible(genome) {
                             continue;
                         }
-                        if registered.iter().any(|c| *c == genome.name) {
+                        if registered.contains(&genome.name) {
                             continue;
                         }
                         let mut cap = ScriptedCapability::from_genome(genome.clone());
@@ -448,7 +460,10 @@ async fn handle_connection(
                     Ok(v) => v,
                     Err(_) => {
                         let resp = serde_json::json!({"success": false, "error": "Invalid JSON"});
-                        writer.write_all(format!("{}\n", resp).as_bytes()).await.ok();
+                        writer
+                            .write_all(format!("{}\n", resp).as_bytes())
+                            .await
+                            .ok();
                         writer.flush().await.ok();
                         continue;
                     }
@@ -458,9 +473,15 @@ async fn handle_connection(
 
                 let response = match method {
                     "exec" => {
-                        let cap = request.get("capability").and_then(|c| c.as_str()).unwrap_or("");
+                        let cap = request
+                            .get("capability")
+                            .and_then(|c| c.as_str())
+                            .unwrap_or("");
                         let action = request.get("action").and_then(|a| a.as_str()).unwrap_or("");
-                        let input = request.get("input").cloned().unwrap_or(serde_json::json!({}));
+                        let input = request
+                            .get("input")
+                            .cloned()
+                            .unwrap_or(serde_json::json!({}));
                         let input_for_failure = input.clone();
 
                         let msg = crate::message::Message::builder()
@@ -472,13 +493,17 @@ async fn handle_connection(
 
                         match bus.send(msg).await {
                             Ok(resp) => {
-                                let is_failure = resp.payload.get("success")
+                                let is_failure = resp
+                                    .payload
+                                    .get("success")
                                     .and_then(|s| s.as_bool())
                                     .map(|s| !s)
                                     .unwrap_or(false);
 
                                 if is_failure {
-                                    let error = resp.payload.get("error")
+                                    let error = resp
+                                        .payload
+                                        .get("error")
                                         .and_then(|e| e.as_str())
                                         .unwrap_or("unknown error");
                                     let mut state = shared.lock().await;
@@ -489,10 +514,13 @@ async fn handle_connection(
                                             action: action.into(),
                                             input: input_for_failure.clone(),
                                             error: error.into(),
-                                            timestamp: format!("{}", std::time::SystemTime::now()
-                                                .duration_since(std::time::UNIX_EPOCH)
-                                                .map(|d| d.as_secs())
-                                                .unwrap_or(0)),
+                                            timestamp: format!(
+                                                "{}",
+                                                std::time::SystemTime::now()
+                                                    .duration_since(std::time::UNIX_EPOCH)
+                                                    .map(|d| d.as_secs())
+                                                    .unwrap_or(0)
+                                            ),
                                         });
                                     }
                                 }
@@ -508,10 +536,13 @@ async fn handle_connection(
                                         action: action.into(),
                                         input: input_for_failure.clone(),
                                         error: e.to_string(),
-                                        timestamp: format!("{}", std::time::SystemTime::now()
-                                            .duration_since(std::time::UNIX_EPOCH)
-                                            .map(|d| d.as_secs())
-                                            .unwrap_or(0)),
+                                        timestamp: format!(
+                                            "{}",
+                                            std::time::SystemTime::now()
+                                                .duration_since(std::time::UNIX_EPOCH)
+                                                .map(|d| d.as_secs())
+                                                .unwrap_or(0)
+                                        ),
                                     });
                                 }
                                 serde_json::json!({"success": false, "error": e.to_string()})
@@ -542,7 +573,10 @@ async fn handle_connection(
                     }
                 };
 
-                writer.write_all(format!("{}\n", response).as_bytes()).await.ok();
+                writer
+                    .write_all(format!("{}\n", response).as_bytes())
+                    .await
+                    .ok();
                 writer.flush().await.ok();
             }
             Err(e) => {
@@ -559,10 +593,7 @@ async fn handle_connection(
 pub fn discover_llm_backends() -> Vec<DiscoveredBackend> {
     let mut backends = vec![];
 
-    for (cmd, backend) in &[
-        ("claude", "claude"),
-        ("devin", "devin"),
-    ] {
+    for (cmd, backend) in &[("claude", "claude"), ("devin", "devin")] {
         if which(cmd).is_some() {
             backends.push(DiscoveredBackend {
                 name: backend.to_string(),

@@ -103,12 +103,13 @@ impl Capability for ShellCapability {
                         detail: format!("等待命令失败: {}", e),
                     })?
                 } else {
-                    child.wait_with_output().await.map_err(|e| {
-                        MessageError::Internal {
+                    child
+                        .wait_with_output()
+                        .await
+                        .map_err(|e| MessageError::Internal {
                             capability: "shell".into(),
                             detail: format!("等待命令失败: {}", e),
-                        }
-                    })?
+                        })?
                 };
 
                 let output = ShellExecOutput {

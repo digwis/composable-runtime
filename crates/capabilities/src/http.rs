@@ -133,7 +133,7 @@ impl Capability for HttpCapability {
                     url: input.url,
                     status,
                     headers: resp_headers,
-                    success: status >= 200 && status < 300,
+                    success: (200..300).contains(&status),
                     body,
                 };
 
@@ -165,21 +165,21 @@ impl Capability for HttpCapability {
 
                 if let Some(parent) = std::path::Path::new(&input.path).parent() {
                     if !parent.exists() {
-                        tokio::fs::create_dir_all(parent)
-                            .await
-                            .map_err(|e| MessageError::Internal {
+                        tokio::fs::create_dir_all(parent).await.map_err(|e| {
+                            MessageError::Internal {
                                 capability: "http".into(),
                                 detail: format!("创建目录失败: {}", e),
-                            })?;
+                            }
+                        })?;
                     }
                 }
 
-                tokio::fs::write(&input.path, &bytes)
-                    .await
-                    .map_err(|e| MessageError::Internal {
+                tokio::fs::write(&input.path, &bytes).await.map_err(|e| {
+                    MessageError::Internal {
                         capability: "http".into(),
                         detail: format!("写入文件失败: {}", e),
-                    })?;
+                    }
+                })?;
 
                 let output = HttpDownloadOutput {
                     url: input.url,

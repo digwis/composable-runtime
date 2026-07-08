@@ -75,7 +75,10 @@ impl Capability for StoreCapability {
         match msg.action.as_str() {
             "set" => {
                 let input: StoreSetInput = msg.payload_as()?;
-                self.data.write().await.insert(input.key.clone(), input.value);
+                self.data
+                    .write()
+                    .await
+                    .insert(input.key.clone(), input.value);
                 let output = StoreSetOutput {
                     key: input.key,
                     success: true,

@@ -1,5 +1,5 @@
 use crate::evolution::EvolutionEngine;
-use crate::genome::{CapabilityGenome, ActionImpl, LlmExecutor, ScriptedCapability};
+use crate::genome::{ActionImpl, CapabilityGenome, LlmExecutor, ScriptedCapability};
 use crate::message_bus::MessageBus;
 use crate::meta_evolve::ExecutorRegistry;
 use crate::platform::Platform;
@@ -201,10 +201,22 @@ impl MutationPlan {
     /// 预期改进描述
     fn expected_improvement(&self) -> &str {
         match self {
-            MutationPlan::FixScript { expected_improvement, .. } => expected_improvement,
-            MutationPlan::FixComposite { expected_improvement, .. } => expected_improvement,
-            MutationPlan::FixPrompt { expected_improvement, .. } => expected_improvement,
-            MutationPlan::FixCustomParams { expected_improvement, .. } => expected_improvement,
+            MutationPlan::FixScript {
+                expected_improvement,
+                ..
+            } => expected_improvement,
+            MutationPlan::FixComposite {
+                expected_improvement,
+                ..
+            } => expected_improvement,
+            MutationPlan::FixPrompt {
+                expected_improvement,
+                ..
+            } => expected_improvement,
+            MutationPlan::FixCustomParams {
+                expected_improvement,
+                ..
+            } => expected_improvement,
         }
     }
 
@@ -226,11 +238,7 @@ const GAP_RETRY_ROUNDS: u32 = 20;
 const PARADIGM_SHIFT_IDLE_ROUNDS: u32 = 15;
 
 impl AutoEvolver {
-    pub fn new(
-        llm: Arc<LlmExecutor>,
-        bus: Arc<MessageBus>,
-        platform: Platform,
-    ) -> Self {
+    pub fn new(llm: Arc<LlmExecutor>, bus: Arc<MessageBus>, platform: Platform) -> Self {
         Self {
             llm,
             bus,
@@ -256,10 +264,14 @@ impl AutoEvolver {
         let mut child = check.map_err(|e| format!("启动 python3 失败: {}", e))?;
         if let Some(mut stdin) = child.stdin.take() {
             use tokio::io::AsyncWriteExt;
-            stdin.write_all(code.as_bytes()).await
+            stdin
+                .write_all(code.as_bytes())
+                .await
                 .map_err(|e| format!("写入 stdin 失败: {}", e))?;
         }
-        let output = child.wait_with_output().await
+        let output = child
+            .wait_with_output()
+            .await
             .map_err(|e| format!("等待 python3 失败: {}", e))?;
         if output.status.success() {
             Ok(())
@@ -322,7 +334,8 @@ impl AutoEvolver {
             // 不直接返回，继续到缺口检测和好奇心探索
             // 跳过归因和变异（没有能力可归因）
         } else {
-            println!("  🔍 自省: {} 个能力, 平均适应度 {:.2}, {} 个弱能力, {} 个休眠能力, 多样性 {:.0}%",
+            println!(
+                "  🔍 自省: {} 个能力, 平均适应度 {:.2}, {} 个弱能力, {} 个休眠能力, 多样性 {:.0}%",
                 report.total_capabilities,
                 report.avg_fitness,
                 report.weak_capabilities.len(),
@@ -331,11 +344,15 @@ impl AutoEvolver {
             );
             // P5: 多样性低时输出重复组
             if !report.duplicate_groups.is_empty() {
-                println!("  ⚠️  多样性警告: {} 个重复组: {}",
+                println!(
+                    "  ⚠️  多样性警告: {} 个重复组: {}",
                     report.duplicate_groups.len(),
-                    report.duplicate_groups.iter()
+                    report
+                        .duplicate_groups
+                        .iter()
                         .map(|(base, versions)| format!("{}({})", base, versions.len()))
-                        .collect::<Vec<_>>().join(", "),
+                        .collect::<Vec<_>>()
+                        .join(", "),
                 );
 
                 // P5: 自动合并 — 淘汰重复组中适应度最低的版本（保留最高）
@@ -344,12 +361,19 @@ impl AutoEvolver {
                         continue;
                     }
                     // 找到适应度最高的版本
-                    let best = versions.iter()
-                        .max_by(|a, b| {
-                            let fa = evolution.genomes().get(*a).map(|g| g.fitness.score).unwrap_or(0.0);
-                            let fb = evolution.genomes().get(*b).map(|g| g.fitness.score).unwrap_or(0.0);
-                            fa.partial_cmp(&fb).unwrap_or(std::cmp::Ordering::Equal)
-                        });
+                    let best = versions.iter().max_by(|a, b| {
+                        let fa = evolution
+                            .genomes()
+                            .get(*a)
+                            .map(|g| g.fitness.score)
+                            .unwrap_or(0.0);
+                        let fb = evolution
+                            .genomes()
+                            .get(*b)
+                            .map(|g| g.fitness.score)
+                            .unwrap_or(0.0);
+                        fa.partial_cmp(&fb).unwrap_or(std::cmp::Ordering::Equal)
+                    });
                     if let Some(best_name) = best {
                         for ver in versions {
                             if ver == best_name {
@@ -362,10 +386,24 @@ impl AutoEvolver {
                             }
                             // 淘汰低适应度版本
                             if let Some(g) = evolution.genomes().get(ver) {
-                                if g.fitness.score < evolution.genomes().get(best_name).map(|bg| bg.fitness.score).unwrap_or(0.0) {
-                                    println!("  🔄 多样性合并: 淘汰 {} (适应度 {:.2} < {} 的 {:.2})",
-                                        ver, g.fitness.score, best_name,
-                                        evolution.genomes().get(best_name).map(|bg| bg.fitness.score).unwrap_or(0.0));
+                                if g.fitness.score
+                                    < evolution
+                                        .genomes()
+                                        .get(best_name)
+                                        .map(|bg| bg.fitness.score)
+                                        .unwrap_or(0.0)
+                                {
+                                    println!(
+                                        "  🔄 多样性合并: 淘汰 {} (适应度 {:.2} < {} 的 {:.2})",
+                                        ver,
+                                        g.fitness.score,
+                                        best_name,
+                                        evolution
+                                            .genomes()
+                                            .get(best_name)
+                                            .map(|bg| bg.fitness.score)
+                                            .unwrap_or(0.0)
+                                    );
                                     evolution.remove_genome(ver);
                                     self.stats.eliminations += 1;
                                     actions.push(format!("多样性合并: 淘汰 {}", ver));
@@ -378,7 +416,10 @@ impl AutoEvolver {
 
             // 2. 归因 + 变异：对每个弱能力分析原因并尝试改进
             // 并行归因（LLM 调用慢），串行变异（只替换代码，快），并行测试
-            let weak_list: Vec<_> = report.weak_capabilities.iter().take(3)
+            let weak_list: Vec<_> = report
+                .weak_capabilities
+                .iter()
+                .take(3)
                 .filter(|weak| {
                     let fail_count = *self.mutation_failures.get(&weak.name).unwrap_or(&0);
                     if fail_count >= 3 {
@@ -411,7 +452,8 @@ impl AutoEvolver {
             }
 
             // 2c. 并行测试
-            let test_targets: Vec<(String, String)> = mutation_results.iter()
+            let test_targets: Vec<(String, String)> = mutation_results
+                .iter()
                 .filter_map(|(parent, result)| {
                     if let Ok(new_name) = result {
                         Some((parent.clone(), new_name.clone()))
@@ -428,14 +470,22 @@ impl AutoEvolver {
             let test_results = futures::future::join_all(test_futures).await;
 
             // 2d. 处理测试结果
-            for ((parent, new_name), (pass, test_input)) in test_targets.iter().zip(test_results.into_iter()) {
+            for ((parent, new_name), (pass, test_input)) in
+                test_targets.iter().zip(test_results.into_iter())
+            {
                 if pass {
                     // P4: 回归测试 — 用父代的持久化测试套件验证
-                    let (regression_rate, regression_total) = self.run_regression_tests(evolution, parent, new_name).await;
+                    let (regression_rate, regression_total) =
+                        self.run_regression_tests(evolution, parent, new_name).await;
                     if regression_total > 0 && regression_rate < 0.5 {
                         // 回归测试通过率太低，淘汰
                         *self.mutation_failures.entry(parent.clone()).or_insert(0) += 1;
-                        println!("  ❌ 回归测试失败: {} → {} ({:.0}% 通过)", parent, new_name, regression_rate * 100.0);
+                        println!(
+                            "  ❌ 回归测试失败: {} → {} ({:.0}% 通过)",
+                            parent,
+                            new_name,
+                            regression_rate * 100.0
+                        );
                         actions.push(format!("变异 {} → {} (回归测试失败)", parent, new_name));
                         evolution.remove_genome(new_name);
                         println!("  🗑️  淘汰回归失败变体: {}", new_name);
@@ -460,11 +510,16 @@ impl AutoEvolver {
 
                     self.stats.mutation_successes += 1;
                     self.mutation_failures.remove(parent);
-                    println!("  ✅ 变异成功: {} → {} (测试+回归+AB 通过)", parent, new_name);
+                    println!(
+                        "  ✅ 变异成功: {} → {} (测试+回归+AB 通过)",
+                        parent, new_name
+                    );
                     actions.push(format!("变异 {} → {} (成功)", parent, new_name));
 
                     // P0-2: 淘汰旧版本（仅变异体）
-                    let is_mutated = evolution.genomes().get(parent)
+                    let is_mutated = evolution
+                        .genomes()
+                        .get(parent)
                         .map(|g| g.lineage.origin == crate::genome::Origin::Mutated)
                         .unwrap_or(false);
                     if is_mutated {
@@ -498,7 +553,9 @@ impl AutoEvolver {
             //
             // P1-1: 并行执行自测试，加速进化循环
             // 注意：自测试只证明能力"能跑通"，不能证明能力"有用"。
-            let untested: Vec<String> = evolution.genomes().iter()
+            let untested: Vec<String> = evolution
+                .genomes()
+                .iter()
                 .filter(|(_, g)| g.fitness.call_count == 0)
                 .map(|(name, _)| name.clone())
                 .collect();
@@ -538,16 +595,24 @@ impl AutoEvolver {
             //
             // 自测试用 LLM 生成合成输入，真实验证用预设的真实场景输入，
             // 确保能力不仅"能跑通"而且"真的有用"。
-            let to_validate: Vec<String> = evolution.genomes().iter()
+            let to_validate: Vec<String> = evolution
+                .genomes()
+                .iter()
                 .filter(|(_, g)| g.fitness.call_count > 0 && g.fitness.success_rate > 0.0)
                 .filter(|(name, _)| {
-                    let op_keywords = ["git", "cargo", "make", "shell", "fs", "file", "ssh", "curl", "http", "npm", "pip", "brew", "rg", "jq", "sqlite", "rustc", "wasm"];
+                    let op_keywords = [
+                        "git", "cargo", "make", "shell", "fs", "file", "ssh", "curl", "http",
+                        "npm", "pip", "brew", "rg", "jq", "sqlite", "rustc", "wasm",
+                    ];
                     op_keywords.iter().any(|k| name.contains(k))
                 })
                 .map(|(name, _)| name.clone())
                 .collect();
             if !to_validate.is_empty() {
-                println!("  🔨 真实验证: {} 个操作类能力待验证 (并行)", to_validate.len().min(3));
+                println!(
+                    "  🔨 真实验证: {} 个操作类能力待验证 (并行)",
+                    to_validate.len().min(3)
+                );
             }
             let to_validate_3: Vec<String> = to_validate.iter().take(3).cloned().collect();
             if !to_validate_3.is_empty() {
@@ -566,7 +631,11 @@ impl AutoEvolver {
                                 g.fitness.record_real_call(true, result.elapsed_ms as f64);
                             }
                         } else {
-                            println!("  ❌ 真实验证失败: {} — {}", name, &result.output[..100.min(result.output.len())]);
+                            println!(
+                                "  ❌ 真实验证失败: {} — {}",
+                                name,
+                                &result.output[..100.min(result.output.len())]
+                            );
                             actions.push(format!("真实验证: {} (失败)", name));
                             if let Some(g) = evolution.genomes_mut().get_mut(name) {
                                 g.fitness.record_real_call(false, result.elapsed_ms as f64);
@@ -585,8 +654,8 @@ impl AutoEvolver {
             // 淘汰规则：
             // - 从未被真实调用（real_calls == 0）+ rounds_dormant >= NEW_CAP_THRESHOLD → 淘汰
             // - 有真实调用但成功率极低（score < 0.01）+ rounds_dormant >= FAILED_CAP_THRESHOLD → 淘汰
-            const NEW_CAP_THRESHOLD: u32 = 20;   // 新能力 20 轮宽限期
-            const FAILED_CAP_THRESHOLD: u32 = 5;  // 失败能力 5 轮宽限期
+            const NEW_CAP_THRESHOLD: u32 = 20; // 新能力 20 轮宽限期
+            const FAILED_CAP_THRESHOLD: u32 = 5; // 失败能力 5 轮宽限期
             let mut to_eliminate = Vec::new();
             for (name, g) in evolution.genomes() {
                 let real_calls = g.fitness.real_call_count();
@@ -601,12 +670,18 @@ impl AutoEvolver {
                     // P3-3: 检查是否有 Composite 能力依赖此能力
                     let dependents = evolution.find_dependents(name);
                     if !dependents.is_empty() {
-                        println!("  ⏭️  跳过淘汰: {} (被 {} 个能力依赖: {})",
-                            name, dependents.len(), dependents.join(", "));
+                        println!(
+                            "  ⏭️  跳过淘汰: {} (被 {} 个能力依赖: {})",
+                            name,
+                            dependents.len(),
+                            dependents.join(", ")
+                        );
                         continue;
                     }
-                    println!("  🗑️  自动淘汰: {} (连续 {} 轮无真实调用, 真实调用 {} 次, 自测试 {} 次)",
-                        name, g.fitness.rounds_dormant, real_calls, g.fitness.auto_test_count);
+                    println!(
+                        "  🗑️  自动淘汰: {} (连续 {} 轮无真实调用, 真实调用 {} 次, 自测试 {} 次)",
+                        name, g.fitness.rounds_dormant, real_calls, g.fitness.auto_test_count
+                    );
                     self.stats.eliminations += 1;
                     actions.push(format!("淘汰 {}", name));
                     to_eliminate.push(name.clone());
@@ -625,7 +700,8 @@ impl AutoEvolver {
             self.stats.gaps_found += 1;
             println!("  💡 发现能力缺口: {}", gap);
             if let Some(tool_name) = gap.split_whitespace().next() {
-                self.tried_gaps.insert(tool_name.to_string(), self.round_count);
+                self.tried_gaps
+                    .insert(tool_name.to_string(), self.round_count);
             }
 
             if let Some(created) = self.fill_gap(evolution, gap).await {
@@ -651,8 +727,10 @@ impl AutoEvolver {
         if need_explore {
             self.stats.explorations += 1;
             if paradigm_shift {
-                println!("  ⚡ 范式跃迁: 连续 {} 轮无新能力，强制跳出当前领域探索...",
-                    self.rounds_since_last_creation);
+                println!(
+                    "  ⚡ 范式跃迁: 连续 {} 轮无新能力，强制跳出当前领域探索...",
+                    self.rounds_since_last_creation
+                );
             } else if report.total_capabilities == 0 {
                 println!("  🔬 好奇心驱动探索: 能力库为空，从零开始创造...");
             } else {
@@ -743,7 +821,10 @@ impl AutoEvolver {
 
             if actions.is_empty() || !has_evolution_action {
                 idle_count += 1;
-                println!("  💤 无进化动作 (连续空闲 {} / {})", idle_count, idle_threshold);
+                println!(
+                    "  💤 无进化动作 (连续空闲 {} / {})",
+                    idle_count, idle_threshold
+                );
             } else {
                 idle_count = 0;
                 println!("  自主进化动作:");
@@ -760,9 +841,11 @@ impl AutoEvolver {
 
             // 打印当前状态
             let genomes = evolution.genomes();
-            println!("  📊 能力数: {} | 平均适应度: {:.2}",
+            println!(
+                "  📊 能力数: {} | 平均适应度: {:.2}",
                 genomes.len(),
-                genomes.values().map(|g| g.fitness.score).sum::<f64>() / genomes.len().max(1) as f64,
+                genomes.values().map(|g| g.fitness.score).sum::<f64>()
+                    / genomes.len().max(1) as f64,
             );
 
             // 等待下一轮（同时监听 Ctrl+C）
@@ -870,18 +953,22 @@ impl AutoEvolver {
     }
 
     /// 评估目标达成度
-    async fn evaluate_goal(
-        &self,
-        evolution: &EvolutionEngine,
-        goal: &str,
-    ) -> (bool, String) {
+    async fn evaluate_goal(&self, evolution: &EvolutionEngine, goal: &str) -> (bool, String) {
         let genomes: Vec<_> = evolution.genomes().values().cloned().collect();
-        let genomes_summary: Vec<String> = genomes.iter()
-            .map(|g| format!("{} (适应度:{:.2}, 动作:{})", g.name, g.fitness.score, g.action_names().join(",")))
+        let genomes_summary: Vec<String> = genomes
+            .iter()
+            .map(|g| {
+                format!(
+                    "{} (适应度:{:.2}, 动作:{})",
+                    g.name,
+                    g.fitness.score,
+                    g.action_names().join(",")
+                )
+            })
             .collect();
 
         let prompt = format!(
-r#"你是一个进化目标评估器。判断当前能力库是否已经达成进化目标。
+            r#"你是一个进化目标评估器。判断当前能力库是否已经达成进化目标。
 
 进化目标: {goal}
 
@@ -893,15 +980,21 @@ r#"你是一个进化目标评估器。判断当前能力库是否已经达成�
   "achieved": true或false,
   "assessment": "评估说明",
   "missing": "如果未达成，还缺什么能力或改进"
-}}"#, genomes_summary.join("\n"));
+}}"#,
+            genomes_summary.join("\n")
+        );
 
         let result = self.llm.execute(&prompt, "smart:assess", None).await;
         match result {
             Ok(text) => {
                 let json_str = extract_json(&text);
-                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&json_str) {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(json_str) {
                     let achieved = v.get("achieved").and_then(|v| v.as_bool()).unwrap_or(false);
-                    let assessment = v.get("assessment").and_then(|v| v.as_str()).unwrap_or("未知").to_string();
+                    let assessment = v
+                        .get("assessment")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("未知")
+                        .to_string();
                     (achieved, assessment)
                 } else {
                     (false, "目标评估解析失败".to_string())
@@ -919,12 +1012,20 @@ r#"你是一个进化目标评估器。判断当前能力库是否已经达成�
         assessment: &str,
     ) -> Option<String> {
         let genomes: Vec<_> = evolution.genomes().values().cloned().collect();
-        let genomes_summary: Vec<String> = genomes.iter()
-            .map(|g| format!("{}: {} ({})", g.name, g.description, g.action_names().join(",")))
+        let genomes_summary: Vec<String> = genomes
+            .iter()
+            .map(|g| {
+                format!(
+                    "{}: {} ({})",
+                    g.name,
+                    g.description,
+                    g.action_names().join(",")
+                )
+            })
             .collect();
 
         let prompt = format!(
-r#"你是一个能力进化引擎。根据进化目标和当前评估，创造一个新能力来推进目标。
+            r#"你是一个能力进化引擎。根据进化目标和当前评估，创造一个新能力来推进目标。
 
 进化目标: {goal}
 当前评估: {assessment}
@@ -954,11 +1055,15 @@ r#"你是一个能力进化引擎。根据进化目标和当前评估，创造�
   ],
   "fitness": {{}},
   "lineage": {{}}
-}}"#, genomes_summary.join("\n"), self.platform.os, self.platform.arch);
+}}"#,
+            genomes_summary.join("\n"),
+            self.platform.os,
+            self.platform.arch
+        );
 
         let result = self.llm.execute(&prompt, "coder:novel", None).await.ok()?;
         let json_str = extract_json(&result);
-        let genome: CapabilityGenome = serde_json::from_str(&json_str).ok()?;
+        let genome: CapabilityGenome = serde_json::from_str(json_str).ok()?;
 
         // P0-1: 语法预检
         if let Err(e) = Self::validate_genome_scripts(&genome).await {
@@ -1014,7 +1119,11 @@ r#"你是一个能力进化引擎。根据进化目标和当前评估，创造�
         }
 
         // 按成功率排序，最差的优先处理
-        weak.sort_by(|a, b| a.success_rate.partial_cmp(&b.success_rate).unwrap_or(std::cmp::Ordering::Equal));
+        weak.sort_by(|a, b| {
+            a.success_rate
+                .partial_cmp(&b.success_rate)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         let avg_fitness = if scored_count > 0 {
             total_score / scored_count as f64
@@ -1060,32 +1169,52 @@ r#"你是一个能力进化引擎。根据进化目标和当前评估，创造�
         let genome = evolution.genomes().get(&weak.name)?;
 
         // 精简 prompt：只传关键信息，不传整个 genome JSON
-        let action_summaries: Vec<String> = genome.actions.iter().map(|a| {
-            let impl_summary = match &a.implementation {
-                ActionImpl::Script { code, language, .. } => {
-                    let truncated = if code.len() > 2000 {
-                        format!("{}...（截断，共 {} 字符）", &code[..2000], code.len())
-                    } else {
-                        code.clone()
-                    };
-                    format!("Script({}): {}", language, truncated)
-                }
-                ActionImpl::Composite { steps } => {
-                    format!("Composite({} steps): {:?}", steps.len(), steps.iter().map(|s| &s.capability).collect::<Vec<_>>())
-                }
-                ActionImpl::Llm { prompt, .. } => {
-                    let truncated = if prompt.len() > 500 { format!("{}...", &prompt[..500]) } else { prompt.clone() };
-                    format!("Llm: {}", truncated)
-                }
-                ActionImpl::Rule { template } => format!("Rule: {}", template),
-                ActionImpl::Native { capability, action } => format!("Native: {} -> {}", capability, action),
-                ActionImpl::Custom { executor_type, params } => format!("Custom({}): {:?}", executor_type, params),
-            };
-            format!("  - action: {} | {} | impl: {}", a.name, a.description, impl_summary)
-        }).collect();
+        let action_summaries: Vec<String> = genome
+            .actions
+            .iter()
+            .map(|a| {
+                let impl_summary = match &a.implementation {
+                    ActionImpl::Script { code, language, .. } => {
+                        let truncated = if code.len() > 2000 {
+                            format!("{}...（截断，共 {} 字符）", &code[..2000], code.len())
+                        } else {
+                            code.clone()
+                        };
+                        format!("Script({}): {}", language, truncated)
+                    }
+                    ActionImpl::Composite { steps } => {
+                        format!(
+                            "Composite({} steps): {:?}",
+                            steps.len(),
+                            steps.iter().map(|s| &s.capability).collect::<Vec<_>>()
+                        )
+                    }
+                    ActionImpl::Llm { prompt, .. } => {
+                        let truncated = if prompt.len() > 500 {
+                            format!("{}...", &prompt[..500])
+                        } else {
+                            prompt.clone()
+                        };
+                        format!("Llm: {}", truncated)
+                    }
+                    ActionImpl::Rule { template } => format!("Rule: {}", template),
+                    ActionImpl::Native { capability, action } => {
+                        format!("Native: {} -> {}", capability, action)
+                    }
+                    ActionImpl::Custom {
+                        executor_type,
+                        params,
+                    } => format!("Custom({}): {:?}", executor_type, params),
+                };
+                format!(
+                    "  - action: {} | {} | impl: {}",
+                    a.name, a.description, impl_summary
+                )
+            })
+            .collect();
 
         let prompt = format!(
-r#"你是一个能力进化分析器。以下能力表现不佳，请分析原因并给出变异方案。
+            r#"你是一个能力进化分析器。以下能力表现不佳，请分析原因并给出变异方案。
 
 能力: {} — {}
 动作列表:
@@ -1134,7 +1263,11 @@ mutation_type 必须是以下之一，且只携带对应字段：
         let parsed: AttributionResult = match serde_json::from_str(json_str) {
             Ok(p) => p,
             Err(e) => {
-                tracing::warn!("归因 JSON 解析失败: {} | 原始: {}", e, safe_truncate(&result, 200));
+                tracing::warn!(
+                    "归因 JSON 解析失败: {} | 原始: {}",
+                    e,
+                    safe_truncate(&result, 200)
+                );
                 return None;
             }
         };
@@ -1153,7 +1286,9 @@ mutation_type 必须是以下之一，且只携带对应字段：
     ) -> Result<String, String> {
         let cap_name = plan.capability();
         let action_name = plan.action();
-        let genome = evolution.genomes().get(cap_name)
+        let genome = evolution
+            .genomes()
+            .get(cap_name)
             .ok_or_else(|| format!("能力 '{}' 不存在", cap_name))?
             .clone();
 
@@ -1164,18 +1299,23 @@ mutation_type 必须是以下之一，且只携带对应字段：
         new_genome.record_mutation(plan.mutation_type_str(), plan.expected_improvement());
 
         // 找到目标动作
-        let action = new_genome.actions.iter_mut()
+        let action = new_genome
+            .actions
+            .iter_mut()
             .find(|a| a.name == action_name)
             .ok_or_else(|| format!("动作 '{}' 不存在", action_name))?;
 
         // enum 对齐：MutationPlan 变体必须与 ActionImpl 变体匹配
         match (plan, &mut action.implementation) {
-            (MutationPlan::FixScript { new_code, .. }, ActionImpl::Script { code, language, .. }) => {
+            (
+                MutationPlan::FixScript { new_code, .. },
+                ActionImpl::Script { code, language, .. },
+            ) => {
                 // P0-1: 语法预检 — Python 代码用 ast.parse 快速过滤语法错误
                 if language == "python" {
                     let check = tokio::process::Command::new("python3")
                         .arg("-c")
-                        .arg(format!("import ast; ast.parse(open('/dev/stdin').read())"))
+                        .arg("import ast; ast.parse(open('/dev/stdin').read())")
                         .stdin(std::process::Stdio::piped())
                         .stdout(std::process::Stdio::null())
                         .stderr(std::process::Stdio::piped())
@@ -1189,7 +1329,10 @@ mutation_type 必须是以下之一，且只携带对应字段：
                         if let Ok(out) = output {
                             if !out.status.success() {
                                 let err = String::from_utf8_lossy(&out.stderr);
-                                return Err(format!("语法预检失败: {}", &err[..200.min(err.len())]));
+                                return Err(format!(
+                                    "语法预检失败: {}",
+                                    &err[..200.min(err.len())]
+                                ));
                             }
                         }
                     }
@@ -1197,21 +1340,27 @@ mutation_type 必须是以下之一，且只携带对应字段：
                 *code = new_code.clone();
             }
             (MutationPlan::FixComposite { new_steps, .. }, ActionImpl::Composite { steps }) => {
-                let parsed_steps: Vec<crate::genome::CompositeStep> = serde_json::from_value(new_steps.clone())
-                    .map_err(|e| format!("new_steps 反序列化失败: {}", e))?;
+                let parsed_steps: Vec<crate::genome::CompositeStep> =
+                    serde_json::from_value(new_steps.clone())
+                        .map_err(|e| format!("new_steps 反序列化失败: {}", e))?;
                 *steps = parsed_steps;
             }
             (MutationPlan::FixPrompt { new_prompt, .. }, ActionImpl::Llm { prompt, .. }) => {
                 *prompt = new_prompt.clone();
             }
-            (MutationPlan::FixCustomParams { new_params, .. }, ActionImpl::Custom { params, .. }) => {
+            (
+                MutationPlan::FixCustomParams { new_params, .. },
+                ActionImpl::Custom { params, .. },
+            ) => {
                 *params = new_params.clone();
             }
             // 类型不匹配：fail fast 而非静默跳过
             (plan, impl_kind) => {
                 return Err(format!(
                     "变异类型 {:?} 不适用于动作 '{}' 的实现类型 {:?}",
-                    plan.mutation_type_str(), action_name, impl_kind
+                    plan.mutation_type_str(),
+                    action_name,
+                    impl_kind
                 ));
             }
         }
@@ -1250,9 +1399,15 @@ mutation_type 必须是以下之一，且只携带对应字段：
         let cap_desc = genome.description.clone();
 
         // 用 LLM 生成真实测试数据（而非假数据）
-        let test_input = self.generate_smart_test_input(
-            capability_name, &cap_desc, &action_name, &action_desc, &action_schema,
-        ).await;
+        let test_input = self
+            .generate_smart_test_input(
+                capability_name,
+                &cap_desc,
+                &action_name,
+                &action_desc,
+                &action_schema,
+            )
+            .await;
 
         let cap = self.build_capability(genome);
 
@@ -1269,18 +1424,16 @@ mutation_type 必须是以下之一，且只携带对应字段：
         let result = self.bus.send(msg).await;
 
         match result {
-            Ok(resp) => {
-                match resp.payload.get("success").and_then(|v| v.as_bool()) {
-                    Some(success) => (success, Some(test_input)),
-                    None => {
-                        tracing::warn!(
-                            "能力 '{}' 测试响应缺少 success 字段（协议违反），视为失败",
-                            capability_name
-                        );
-                        (false, Some(test_input))
-                    }
+            Ok(resp) => match resp.payload.get("success").and_then(|v| v.as_bool()) {
+                Some(success) => (success, Some(test_input)),
+                None => {
+                    tracing::warn!(
+                        "能力 '{}' 测试响应缺少 success 字段（协议违反），视为失败",
+                        capability_name
+                    );
+                    (false, Some(test_input))
                 }
-            }
+            },
             Err(e) => {
                 tracing::warn!("能力 '{}' 测试调用失败: {}", capability_name, e);
                 (false, Some(test_input))
@@ -1332,7 +1485,9 @@ mutation_type 必须是以下之一，且只携带对应字段：
 
             match self.bus.send(msg).await {
                 Ok(resp) => {
-                    let success = resp.payload.get("success")
+                    let success = resp
+                        .payload
+                        .get("success")
                         .and_then(|v| v.as_bool())
                         .unwrap_or(false);
                     if success == tc.expect_success {
@@ -1350,10 +1505,20 @@ mutation_type 必须是以下之一，且只携带对应字段：
             }
         }
 
-        let pass_rate = if total > 0 { passed as f64 / total as f64 } else { 1.0 };
+        let pass_rate = if total > 0 {
+            passed as f64 / total as f64
+        } else {
+            1.0
+        };
         if total > 0 {
-            println!("  🧪 回归测试: {} → {} ({}/{} 通过, {:.0}%)",
-                parent_name, child_name, passed, total, pass_rate * 100.0);
+            println!(
+                "  🧪 回归测试: {} → {} ({}/{} 通过, {:.0}%)",
+                parent_name,
+                child_name,
+                passed,
+                total,
+                pass_rate * 100.0
+            );
         }
         (pass_rate, total)
     }
@@ -1396,11 +1561,19 @@ mutation_type 必须是以下之一，且只携带对应字段：
             .build();
         let child_result = self.bus.send(child_msg).await;
         let child_success = match &child_result {
-            Ok(resp) => resp.payload.get("success").and_then(|v| v.as_bool()).unwrap_or(false),
+            Ok(resp) => resp
+                .payload
+                .get("success")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
             Err(_) => false,
         };
         let child_latency = match &child_result {
-            Ok(resp) => resp.payload.get("_elapsed_ms").and_then(|v| v.as_f64()).unwrap_or(100.0),
+            Ok(resp) => resp
+                .payload
+                .get("_elapsed_ms")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(100.0),
             Err(_) => 9999.0,
         };
 
@@ -1417,11 +1590,19 @@ mutation_type 必须是以下之一，且只携带对应字段：
             .build();
         let parent_result = self.bus.send(parent_msg).await;
         let parent_success = match &parent_result {
-            Ok(resp) => resp.payload.get("success").and_then(|v| v.as_bool()).unwrap_or(false),
+            Ok(resp) => resp
+                .payload
+                .get("success")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
             Err(_) => false,
         };
         let parent_latency = match &parent_result {
-            Ok(resp) => resp.payload.get("_elapsed_ms").and_then(|v| v.as_f64()).unwrap_or(100.0),
+            Ok(resp) => resp
+                .payload
+                .get("_elapsed_ms")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(100.0),
             Err(_) => 9999.0,
         };
 
@@ -1438,8 +1619,10 @@ mutation_type 必须是以下之一，且只携带对应字段：
         };
 
         if !promote {
-            println!("  ⚖️  AB 对比: {} vs {} — 父代更优 (父:{}ms 子:{}ms), 回滚",
-                parent_name, child_name, parent_latency as u64, child_latency as u64);
+            println!(
+                "  ⚖️  AB 对比: {} vs {} — 父代更优 (父:{}ms 子:{}ms), 回滚",
+                parent_name, child_name, parent_latency as u64, child_latency as u64
+            );
         }
 
         promote
@@ -1460,7 +1643,10 @@ mutation_type 必须是以下之一，且只携带对应字段：
         }
 
         // 只对操作类能力做真实验证（跳过分析类、监控类）
-        let op_keywords = ["git", "cargo", "make", "shell", "fs", "file", "ssh", "curl", "http", "npm", "pip", "brew", "rg", "jq", "sqlite", "rustc", "wasm"];
+        let op_keywords = [
+            "git", "cargo", "make", "shell", "fs", "file", "ssh", "curl", "http", "npm", "pip",
+            "brew", "rg", "jq", "sqlite", "rustc", "wasm",
+        ];
         let is_op_cap = op_keywords.iter().any(|k| capability_name.contains(k));
         if !is_op_cap {
             return None;
@@ -1489,8 +1675,14 @@ mutation_type 必须是以下之一，且只携带对应字段：
 
         match result {
             Ok(resp) => {
-                let success = resp.payload.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
-                let output = resp.payload.get("result")
+                let success = resp
+                    .payload
+                    .get("success")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let output = resp
+                    .payload
+                    .get("result")
                     .map(|v| serde_json::to_string(v).unwrap_or_default())
                     .unwrap_or_default();
                 Some(RealValidationResult {
@@ -1528,15 +1720,11 @@ mutation_type 必须是以下之一，且只携带对应字段：
                 return Some(serde_json::json!({"path": ".", "cached": false}));
             }
         }
-        if cap_name.contains("cargo") {
-            if action.contains("run_cargo") || action == "run_cargo" {
-                return Some(serde_json::json!({"command": "version"}));
-            }
+        if cap_name.contains("cargo") && (action.contains("run_cargo") || action == "run_cargo") {
+            return Some(serde_json::json!({"command": "version"}));
         }
-        if cap_name.contains("rustc") {
-            if action.contains("compile") || action == "compile" {
-                return Some(serde_json::json!({"source_code": "fn main() { println!(\"hello\"); }"}));
-            }
+        if cap_name.contains("rustc") && (action.contains("compile") || action == "compile") {
+            return Some(serde_json::json!({"source_code": "fn main() { println!(\"hello\"); }"}));
         }
         if cap_name.contains("make") {
             return Some(serde_json::json!({"target": "help"}));
@@ -1560,15 +1748,15 @@ mutation_type 必须是以下之一，且只携带对应字段：
     }
 
     /// 检测能力缺口：根据环境分析还缺什么能力
-    pub async fn detect_capability_gaps(
-        &self,
-        evolution: &EvolutionEngine,
-    ) -> Vec<String> {
+    pub async fn detect_capability_gaps(&self, evolution: &EvolutionEngine) -> Vec<String> {
         let mut gaps = Vec::new();
         let existing: Vec<String> = evolution.genomes().keys().cloned().collect();
 
         // 检测环境中有哪些工具可用但还没有对应能力
-        let env_tools: Vec<String> = self.platform.env.iter()
+        let env_tools: Vec<String> = self
+            .platform
+            .env
+            .iter()
             .filter(|(k, v)| k.starts_with("has_") && v.as_str() == "true")
             .map(|(k, _)| k.strip_prefix("has_").unwrap_or(k).to_string())
             .collect();
@@ -1579,7 +1767,9 @@ mutation_type 必须是以下之一，且只携带对应字段：
         // 之后自动过期，允许能力被淘汰后重新填补。
         for tool in &env_tools {
             let has_cap = existing.iter().any(|name| name.contains(tool));
-            let recently_tried = self.tried_gaps.get(tool)
+            let recently_tried = self
+                .tried_gaps
+                .get(tool)
                 .map(|&last_round| self.round_count.saturating_sub(last_round) < GAP_RETRY_ROUNDS)
                 .unwrap_or(false);
             if !has_cap && tool != "python3" && tool != "node" && !recently_tried {
@@ -1591,14 +1781,10 @@ mutation_type 必须是以下之一，且只携带对应字段：
     }
 
     /// 自动填补能力缺口：根据缺口描述用 LLM 创造新能力
-    pub async fn fill_gap(
-        &self,
-        evolution: &mut EvolutionEngine,
-        gap: &str,
-    ) -> Option<String> {
+    pub async fn fill_gap(&self, evolution: &mut EvolutionEngine, gap: &str) -> Option<String> {
         let existing: Vec<String> = evolution.genomes().keys().cloned().collect();
         let prompt = format!(
-r#"创造一个新能力填补缺口。缺口: {gap}
+            r#"创造一个新能力填补缺口。缺口: {gap}
 
 已有能力: {}
 平台: {} ({}) 工具: {}
@@ -1611,9 +1797,18 @@ r#"创造一个新能力填补缺口。缺口: {gap}
   "actions": [{{"name": "动作名", "description": "描述", "input_schema": {{"properties": {{}}}}, "implementation": {{"type": "Script", "language": "python", "code": "简短Python代码", "timeout_secs": 30}}}}],
   "fitness": {{}},
   "lineage": {{}}
-}}"#, existing.join(", "), self.platform.os, self.platform.arch,
-    self.platform.env.iter().filter(|(k, v)| k.starts_with("has_") && v.as_str() == "true")
-        .map(|(k, _)| k.strip_prefix("has_").unwrap_or(k)).collect::<Vec<_>>().join(", "));
+}}"#,
+            existing.join(", "),
+            self.platform.os,
+            self.platform.arch,
+            self.platform
+                .env
+                .iter()
+                .filter(|(k, v)| k.starts_with("has_") && v.as_str() == "true")
+                .map(|(k, _)| k.strip_prefix("has_").unwrap_or(k))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
 
         let result = match self.llm.execute(&prompt, "coder:gapfill", None).await {
             Ok(text) => text,
@@ -1626,7 +1821,11 @@ r#"创造一个新能力填补缺口。缺口: {gap}
         let genome: CapabilityGenome = match serde_json::from_str(json_str) {
             Ok(g) => g,
             Err(e) => {
-                tracing::warn!("缺口填补 JSON 解析失败: {} | 原始前200字符: {}", e, safe_truncate(&result, 200));
+                tracing::warn!(
+                    "缺口填补 JSON 解析失败: {} | 原始前200字符: {}",
+                    e,
+                    safe_truncate(&result, 200)
+                );
                 return None;
             }
         };
@@ -1658,19 +1857,37 @@ r#"创造一个新能力填补缺口。缺口: {gap}
         paradigm_shift: bool,
     ) -> Option<String> {
         let genomes: Vec<_> = evolution.genomes().values().cloned().collect();
-        let cap_summary: Vec<String> = genomes.iter()
-            .map(|g| format!("{}: {} [{}]", g.name, g.description, g.action_names().join(",")))
+        let cap_summary: Vec<String> = genomes
+            .iter()
+            .map(|g| {
+                format!(
+                    "{}: {} [{}]",
+                    g.name,
+                    g.description,
+                    g.action_names().join(",")
+                )
+            })
             .collect();
 
         // 感知全部可用工具（包括 Python 包）
-        let all_tools: Vec<String> = self.platform.env.iter()
-            .filter(|(k, v)| (k.starts_with("has_") || k.starts_with("has_py_")) && v.as_str() == "true")
-            .map(|(k, _)| k.strip_prefix("has_").or_else(|| k.strip_prefix("has_py_")).unwrap_or(k).to_string())
+        let all_tools: Vec<String> = self
+            .platform
+            .env
+            .iter()
+            .filter(|(k, v)| {
+                (k.starts_with("has_") || k.starts_with("has_py_")) && v.as_str() == "true"
+            })
+            .map(|(k, _)| {
+                k.strip_prefix("has_")
+                    .or_else(|| k.strip_prefix("has_py_"))
+                    .unwrap_or(k)
+                    .to_string()
+            })
             .collect();
 
         // 第一步：让 LLM 自主分析当前能力库的认知边界
         let analysis_prompt = format!(
-r#"你是一个自主进化系统的认知分析器。
+            r#"你是一个自主进化系统的认知分析器。
 
 当前系统已拥有的能力:
 {caps}
@@ -1697,7 +1914,11 @@ r#"你是一个自主进化系统的认知分析器。
     "lineage": {{}}
   }}
 }}"#,
-            caps = if cap_summary.is_empty() { "（空，系统刚启动）".to_string() } else { cap_summary.join("\n") },
+            caps = if cap_summary.is_empty() {
+                "（空，系统刚启动）".to_string()
+            } else {
+                cap_summary.join("\n")
+            },
             tools = all_tools.join(", "),
         );
 
@@ -1719,13 +1940,14 @@ r#"你是一个自主进化系统的认知分析器。
         let json_str = extract_json(&result);
 
         // 检查是否 LLM 认为不需要新能力
-        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&json_str) {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(json_str) {
             if v.get("skip").and_then(|s| s.as_bool()).unwrap_or(false) {
                 return None;
             }
             // 打印 LLM 的自主分析
             if let Some(domains) = v.get("covered_domains").and_then(|d| d.as_array()) {
-                let names: Vec<String> = domains.iter()
+                let names: Vec<String> = domains
+                    .iter()
                     .filter_map(|d| d.as_str().map(String::from))
                     .collect();
                 if !names.is_empty() {
@@ -1748,7 +1970,11 @@ r#"你是一个自主进化系统的认知分析器。
         // LLM 可能返回 {"proposal": {...}} 或直接 {...}，用 serde_json::Value 提取
         let v: serde_json::Value = serde_json::from_str(json_str)
             .map_err(|e| {
-                tracing::warn!("探索 JSON 解析失败: {} | 原始前200字符: {}", e, safe_truncate(&result, 200));
+                tracing::warn!(
+                    "探索 JSON 解析失败: {} | 原始前200字符: {}",
+                    e,
+                    safe_truncate(&result, 200)
+                );
                 e
             })
             .ok()?;
@@ -1756,7 +1982,11 @@ r#"你是一个自主进化系统的认知分析器。
         let genome: CapabilityGenome = match serde_json::from_value(proposal.clone()) {
             Ok(g) => g,
             Err(e) => {
-                tracing::warn!("探索基因组反序列化失败: {} | 原始前200字符: {}", e, safe_truncate(&result, 200));
+                tracing::warn!(
+                    "探索基因组反序列化失败: {} | 原始前200字符: {}",
+                    e,
+                    safe_truncate(&result, 200)
+                );
                 return None;
             }
         };
@@ -1779,10 +2009,7 @@ r#"你是一个自主进化系统的认知分析器。
     }
 
     /// 交叉重组：取两个现有能力，组合产生新能力
-    pub async fn crossover_capabilities(
-        &self,
-        evolution: &mut EvolutionEngine,
-    ) -> Option<String> {
+    pub async fn crossover_capabilities(&self, evolution: &mut EvolutionEngine) -> Option<String> {
         let genomes: Vec<_> = evolution.genomes().values().cloned().collect();
         if genomes.len() < 2 {
             return None;
@@ -1790,12 +2017,17 @@ r#"你是一个自主进化系统的认知分析器。
 
         // 取适应度最高的两个能力作为父代
         let mut sorted = genomes.clone();
-        sorted.sort_by(|a, b| b.fitness.score.partial_cmp(&a.fitness.score).unwrap_or(std::cmp::Ordering::Equal));
+        sorted.sort_by(|a, b| {
+            b.fitness
+                .score
+                .partial_cmp(&a.fitness.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         let parent1 = &sorted[0];
         let parent2 = &sorted[1];
 
         let prompt = format!(
-r#"交叉重组两个能力产生新能力。
+            r#"交叉重组两个能力产生新能力。
 父代1: {} — {} [{}]
 父代2: {} — {} [{}]
 
@@ -1807,12 +2039,22 @@ r#"交叉重组两个能力产生新能力。
   "actions": [{{"name": "动作名", "description": "描述", "input_schema": {{"properties": {{}}}}, "implementation": {{"type": "Script", "language": "python", "code": "简短Python代码", "timeout_secs": 30}}}}],
   "fitness": {{}},
   "lineage": {{}}
-}}"#, parent1.name, parent1.description, parent1.action_names().join(","),
-    parent2.name, parent2.description, parent2.action_names().join(","));
+}}"#,
+            parent1.name,
+            parent1.description,
+            parent1.action_names().join(","),
+            parent2.name,
+            parent2.description,
+            parent2.action_names().join(",")
+        );
 
-        let result = self.llm.execute(&prompt, "coder:crossover", None).await.ok()?;
+        let result = self
+            .llm
+            .execute(&prompt, "coder:crossover", None)
+            .await
+            .ok()?;
         let json_str = extract_json(&result);
-        let genome: CapabilityGenome = serde_json::from_str(&json_str).ok()?;
+        let genome: CapabilityGenome = serde_json::from_str(json_str).ok()?;
 
         // P0-1: 语法预检
         if let Err(e) = Self::validate_genome_scripts(&genome).await {
@@ -1847,14 +2089,28 @@ r#"交叉重组两个能力产生新能力。
 
         // 选择适应度最高的能力作为候选组件
         let mut sorted: Vec<_> = genomes.iter().collect();
-        sorted.sort_by(|a, b| b.1.fitness.score.partial_cmp(&a.1.fitness.score).unwrap_or(std::cmp::Ordering::Equal));
-        let candidates: Vec<String> = sorted.iter().take(8)
-            .map(|(name, g)| format!("{}: {} (actions: {}, fitness: {:.2})",
-                name, g.description, g.action_names().join(","), g.fitness.score))
+        sorted.sort_by(|a, b| {
+            b.1.fitness
+                .score
+                .partial_cmp(&a.1.fitness.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        let candidates: Vec<String> = sorted
+            .iter()
+            .take(8)
+            .map(|(name, g)| {
+                format!(
+                    "{}: {} (actions: {}, fitness: {:.2})",
+                    name,
+                    g.description,
+                    g.action_names().join(","),
+                    g.fitness.score
+                )
+            })
             .collect();
 
         let prompt = format!(
-r#"你是一个能力进化引擎。请分析以下现有能力，创造一个组合能力（Composite 类型）。
+            r#"你是一个能力进化引擎。请分析以下现有能力，创造一个组合能力（Composite 类型）。
 
 现有能力:
 {}
@@ -1891,16 +2147,23 @@ r#"你是一个能力进化引擎。请分析以下现有能力，创造一个�
   }}],
   "fitness": {{}},
   "lineage": {{"origin": "Crossbred"}}
-}}"#, candidates.join("\n"));
+}}"#,
+            candidates.join("\n")
+        );
 
-        let result = self.llm.execute(&prompt, "smart:composite", None).await.ok()?;
+        let result = self
+            .llm
+            .execute(&prompt, "smart:composite", None)
+            .await
+            .ok()?;
         let json_str = extract_json(&result);
-        let genome: CapabilityGenome = serde_json::from_str(&json_str).ok()?;
+        let genome: CapabilityGenome = serde_json::from_str(json_str).ok()?;
 
         // 验证确实是 Composite 类型
-        let is_composite = genome.actions.iter().any(|a| {
-            matches!(a.implementation, ActionImpl::Composite { .. })
-        });
+        let is_composite = genome
+            .actions
+            .iter()
+            .any(|a| matches!(a.implementation, ActionImpl::Composite { .. }));
         if !is_composite {
             tracing::warn!("LLM 返回的不是 Composite 类型能力");
             return None;
@@ -1928,19 +2191,20 @@ r#"你是一个能力进化引擎。请分析以下现有能力，创造一个�
         let schema_str = serde_json::to_string_pretty(schema).unwrap_or_default();
 
         let prompt = format!(
-r#"为能力测试生成真实合理的输入数据。
+            r#"为能力测试生成真实合理的输入数据。
 
 能力: {cap_name} — {cap_desc}
 动作: {action_name} — {action_desc}
 输入 Schema: {schema_str}
 
 请生成一个真实场景下的测试输入，确保数据有意义、能触发核心逻辑。
-返回严格 JSON（直接可用的输入对象，不要包裹在其他结构中）:"#);
+返回严格 JSON（直接可用的输入对象，不要包裹在其他结构中）:"#
+        );
 
         match self.llm.execute(&prompt, "fast:testinput", None).await {
             Ok(text) => {
                 let json_str = extract_json(&text);
-                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&json_str) {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(json_str) {
                     if v.is_object() {
                         return v;
                     }
@@ -1981,7 +2245,10 @@ r#"为能力测试生成真实合理的输入数据。
         for name in &cap_names {
             // 跳过原生能力（它们不是 ScriptedCapability，没有 runtime_fitness）
             // 用 is_native() 类型方法替代硬编码字符串列表
-            let is_native = self.bus.get_capability(name).await
+            let is_native = self
+                .bus
+                .get_capability(name)
+                .await
                 .map(|cap| cap.is_native())
                 .unwrap_or(false);
             if is_native {
@@ -1996,14 +2263,23 @@ r#"为能力测试生成真实合理的输入数据。
                 .payload(serde_json::json!({}))
                 .build();
 
-            let resp = self.bus.send(msg).await
-                .map_err(|e| format!("sync_fitness: 能力 '{}' __fitness__ 调用失败: {}", name, e))?;
-            let fitness_json = resp.payload.get("fitness")
+            let resp = self.bus.send(msg).await.map_err(|e| {
+                format!("sync_fitness: 能力 '{}' __fitness__ 调用失败: {}", name, e)
+            })?;
+            let fitness_json = resp
+                .payload
+                .get("fitness")
                 .ok_or_else(|| format!("sync_fitness: 能力 '{}' 响应缺少 fitness 字段", name))?;
-            let mut fitness: crate::genome::FitnessGene = serde_json::from_value(fitness_json.clone())
-                .map_err(|e| format!("sync_fitness: 能力 '{}' fitness 反序列化失败: {}", name, e))?;
-            let genome = evolution.genomes_mut().get_mut(name)
-                .ok_or_else(|| format!("sync_fitness: 能力 '{}' 在总线上但不在进化引擎中（数据不一致）", name))?;
+            let mut fitness: crate::genome::FitnessGene =
+                serde_json::from_value(fitness_json.clone()).map_err(|e| {
+                    format!("sync_fitness: 能力 '{}' fitness 反序列化失败: {}", name, e)
+                })?;
+            let genome = evolution.genomes_mut().get_mut(name).ok_or_else(|| {
+                format!(
+                    "sync_fitness: 能力 '{}' 在总线上但不在进化引擎中（数据不一致）",
+                    name
+                )
+            })?;
 
             // 保留 genome 中的 auto_test_count（runtime_fitness 不跟踪此字段）
             fitness.auto_test_count = genome.fitness.auto_test_count;
@@ -2066,7 +2342,8 @@ fn generate_test_input(schema: &serde_json::Value) -> serde_json::Value {
 
     if let Some(props) = schema.get("properties").and_then(|p| p.as_object()) {
         for (key, schema) in props {
-            let desc = schema.get("description")
+            let desc = schema
+                .get("description")
                 .and_then(|d| d.as_str())
                 .unwrap_or("");
             let key_lower = key.to_lowercase();
@@ -2080,19 +2357,35 @@ fn generate_test_input(schema: &serde_json::Value) -> serde_json::Value {
                         serde_json::Value::String("127.0.0.1".to_string())
                     } else if hint.contains("url") || hint.contains("endpoint") {
                         serde_json::Value::String("https://httpbin.org/get".to_string())
-                    } else if hint.contains("path") || hint.contains("file") || hint.contains("目录") || hint.contains("路径") {
+                    } else if hint.contains("path")
+                        || hint.contains("file")
+                        || hint.contains("目录")
+                        || hint.contains("路径")
+                    {
                         serde_json::Value::String("/tmp".to_string())
-                    } else if hint.contains("db") || hint.contains("database") || hint.contains("数据库") {
+                    } else if hint.contains("db")
+                        || hint.contains("database")
+                        || hint.contains("数据库")
+                    {
                         serde_json::Value::String(":memory:".to_string())
                     } else if hint.contains("sql") || hint.contains("query") {
                         serde_json::Value::String("SELECT 1".to_string())
-                    } else if hint.contains("command") || hint.contains("cmd") || hint.contains("命令") {
+                    } else if hint.contains("command")
+                        || hint.contains("cmd")
+                        || hint.contains("命令")
+                    {
                         serde_json::Value::String("echo hello".to_string())
                     } else if hint.contains("json") {
                         serde_json::Value::String(r#"{"test": true}"#.to_string())
-                    } else if hint.contains("pattern") || hint.contains("filter") || hint.contains("正则") {
+                    } else if hint.contains("pattern")
+                        || hint.contains("filter")
+                        || hint.contains("正则")
+                    {
                         serde_json::Value::String("test".to_string())
-                    } else if hint.contains("message") || hint.contains("msg") || hint.contains("消息") {
+                    } else if hint.contains("message")
+                        || hint.contains("msg")
+                        || hint.contains("消息")
+                    {
                         serde_json::Value::String("test message".to_string())
                     } else if hint.contains("version") || hint.contains("版本") {
                         serde_json::Value::String("0.1.0".to_string())
@@ -2100,7 +2393,10 @@ fn generate_test_input(schema: &serde_json::Value) -> serde_json::Value {
                         serde_json::Value::String("all".to_string())
                     } else if hint.contains("script") {
                         serde_json::Value::String("test".to_string())
-                    } else if hint.contains("package") || hint.contains("pkg") || hint.contains("包") {
+                    } else if hint.contains("package")
+                        || hint.contains("pkg")
+                        || hint.contains("包")
+                    {
                         serde_json::Value::String("requests".to_string())
                     } else if hint.contains("data") || hint.contains("内容") {
                         serde_json::Value::String(r#"{"key": "value"}"#.to_string())
@@ -2117,7 +2413,10 @@ fn generate_test_input(schema: &serde_json::Value) -> serde_json::Value {
                 Some("integer") | Some("number") => {
                     if hint.contains("port") {
                         serde_json::json!(8080)
-                    } else if hint.contains("count") || hint.contains("limit") || hint.contains("数量") {
+                    } else if hint.contains("count")
+                        || hint.contains("limit")
+                        || hint.contains("数量")
+                    {
                         serde_json::json!(10)
                     } else if hint.contains("timeout") || hint.contains("超时") {
                         serde_json::json!(30)
@@ -2133,8 +2432,6 @@ fn generate_test_input(schema: &serde_json::Value) -> serde_json::Value {
                 Some("array") => {
                     if hint.contains("ignore") || hint.contains("过滤") {
                         serde_json::json!(["*.tmp", "*.log"])
-                    } else if hint.contains("args") || hint.contains("参数") {
-                        serde_json::json!([])
                     } else {
                         serde_json::json!([])
                     }
@@ -2142,8 +2439,6 @@ fn generate_test_input(schema: &serde_json::Value) -> serde_json::Value {
                 Some("object") => {
                     if hint.contains("header") || hint.contains("头") {
                         serde_json::json!({"Content-Type": "application/json"})
-                    } else if hint.contains("params") || hint.contains("参数") {
-                        serde_json::json!({})
                     } else {
                         serde_json::json!({})
                     }
@@ -2216,7 +2511,12 @@ mod tests {
         }"#;
         let plan: MutationPlan = serde_json::from_str(json).unwrap();
         match plan {
-            MutationPlan::FixScript { capability, action, new_code, expected_improvement } => {
+            MutationPlan::FixScript {
+                capability,
+                action,
+                new_code,
+                expected_improvement,
+            } => {
                 assert_eq!(capability, "git-tool");
                 assert_eq!(action, "commit");
                 assert_eq!(new_code, "print('hello')");
@@ -2238,7 +2538,12 @@ mod tests {
         }"#;
         let plan: MutationPlan = serde_json::from_str(json).unwrap();
         match plan {
-            MutationPlan::FixComposite { capability, action, new_steps, .. } => {
+            MutationPlan::FixComposite {
+                capability,
+                action,
+                new_steps,
+                ..
+            } => {
                 assert_eq!(capability, "pipeline");
                 assert_eq!(action, "run");
                 assert!(new_steps.is_array());

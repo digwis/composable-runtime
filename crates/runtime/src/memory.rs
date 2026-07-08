@@ -72,9 +72,7 @@ impl ShortTermMemory {
     }
 
     pub fn has_repeated_failure(&self, step: &str, threshold: u32) -> bool {
-        self.task_failures.iter()
-            .filter(|f| f.step == step)
-            .count() as u32 >= threshold
+        self.task_failures.iter().filter(|f| f.step == step).count() as u32 >= threshold
     }
 
     /// 转为 LLM 可读的上下文
@@ -220,8 +218,7 @@ impl LongTermMemory {
         self.stats.total_tasks += 1;
         self.stats.total_successes += 1;
 
-        let existing = self.workflow_templates.iter_mut()
-            .find(|w| w.task == task);
+        let existing = self.workflow_templates.iter_mut().find(|w| w.task == task);
 
         if let Some(w) = existing {
             w.success_count += 1;
@@ -257,8 +254,7 @@ impl LongTermMemory {
 
     /// 记录能力调用
     pub fn record_capability_call(&mut self, name: &str, success: bool, latency_ms: u64) {
-        let stat = self.capability_stats.entry(name.to_string())
-            .or_default();
+        let stat = self.capability_stats.entry(name.to_string()).or_default();
         stat.total_calls += 1;
         if success {
             stat.successes += 1;
@@ -291,13 +287,16 @@ impl LongTermMemory {
             return Some(w);
         }
         let task_lower = task.to_lowercase();
-        self.workflow_templates.iter()
-            .find(|w| w.task.to_lowercase().contains(&task_lower) || task_lower.contains(&w.task.to_lowercase()))
+        self.workflow_templates.iter().find(|w| {
+            w.task.to_lowercase().contains(&task_lower)
+                || task_lower.contains(&w.task.to_lowercase())
+        })
     }
 
     /// 获取低成功率能力（需要进化的候选）
     pub fn weak_capabilities(&self, min_calls: u64) -> Vec<(String, f64)> {
-        self.capability_stats.iter()
+        self.capability_stats
+            .iter()
             .filter(|(_, s)| s.total_calls >= min_calls && s.success_rate() < 0.7)
             .map(|(k, s)| (k.clone(), s.success_rate()))
             .collect()
@@ -312,7 +311,9 @@ impl LongTermMemory {
             for w in &self.workflow_templates {
                 s.push_str(&format!(
                     "  • '{}' (成功 {} 次, {} 步)\n",
-                    w.task, w.success_count, w.steps.len()
+                    w.task,
+                    w.success_count,
+                    w.steps.len()
                 ));
             }
         }
@@ -326,11 +327,18 @@ impl LongTermMemory {
 
         if !self.capability_stats.is_empty() {
             let total: u64 = self.capability_stats.values().map(|s| s.total_calls).sum();
-            let avg_success = self.capability_stats.values()
+            let avg_success = self
+                .capability_stats
+                .values()
                 .map(|s| s.success_rate())
-                .sum::<f64>() / self.capability_stats.len() as f64;
-            s.push_str(&format!("\n能力使用统计: {} 个能力, {} 次调用, 平均成功率 {:.0}%\n",
-                self.capability_stats.len(), total, avg_success * 100.0));
+                .sum::<f64>()
+                / self.capability_stats.len() as f64;
+            s.push_str(&format!(
+                "\n能力使用统计: {} 个能力, {} 次调用, 平均成功率 {:.0}%\n",
+                self.capability_stats.len(),
+                total,
+                avg_success * 100.0
+            ));
         }
 
         if s.is_empty() {
@@ -393,19 +401,22 @@ impl PersistentMemory {
 
         if let Ok(content) = std::fs::read_to_string(&path) {
             if let Ok(memory) = serde_json::from_str::<PersistentMemory>(&content) {
-                tracing::info!("加载持久化记忆: {} 模板, {} 基因组, {} 事件",
+                tracing::info!(
+                    "加载持久化记忆: {} 模板, {} 基因组, {} 事件",
                     memory.workflow_templates.len(),
                     memory.genomes.len(),
-                    memory.evolution_history.len());
+                    memory.evolution_history.len()
+                );
                 let mut mem = memory;
                 mem.short_term = ShortTermMemory::new();
                 return mem;
             }
         }
 
-        let mut mem = PersistentMemory::default();
-        mem.short_term = ShortTermMemory::new();
-        mem
+        PersistentMemory {
+            short_term: ShortTermMemory::new(),
+            ..Default::default()
+        }
     }
 
     /// 保存到磁盘
@@ -426,8 +437,7 @@ impl PersistentMemory {
         self.stats.total_tasks += 1;
         self.stats.total_successes += 1;
 
-        let existing = self.workflow_templates.iter_mut()
-            .find(|w| w.task == task);
+        let existing = self.workflow_templates.iter_mut().find(|w| w.task == task);
 
         if let Some(w) = existing {
             w.success_count += 1;
@@ -471,8 +481,7 @@ impl PersistentMemory {
 
     /// 记录能力调用统计
     pub fn record_capability_call(&mut self, name: &str, success: bool, latency_ms: u64) {
-        let stat = self.capability_stats.entry(name.to_string())
-            .or_default();
+        let stat = self.capability_stats.entry(name.to_string()).or_default();
         stat.total_calls += 1;
         if success {
             stat.successes += 1;
@@ -503,13 +512,16 @@ impl PersistentMemory {
             return Some(w);
         }
         let task_lower = task.to_lowercase();
-        self.workflow_templates.iter()
-            .find(|w| w.task.to_lowercase().contains(&task_lower) || task_lower.contains(&w.task.to_lowercase()))
+        self.workflow_templates.iter().find(|w| {
+            w.task.to_lowercase().contains(&task_lower)
+                || task_lower.contains(&w.task.to_lowercase())
+        })
     }
 
     /// 获取低成功率能力
     pub fn weak_capabilities(&self, min_calls: u64) -> Vec<(String, f64)> {
-        self.capability_stats.iter()
+        self.capability_stats
+            .iter()
             .filter(|(_, s)| s.total_calls >= min_calls && s.success_rate() < 0.7)
             .map(|(k, s)| (k.clone(), s.success_rate()))
             .collect()
@@ -524,7 +536,9 @@ impl PersistentMemory {
             for w in &self.workflow_templates {
                 s.push_str(&format!(
                     "  • '{}' (成功 {} 次, {} 步)\n",
-                    w.task, w.success_count, w.steps.len()
+                    w.task,
+                    w.success_count,
+                    w.steps.len()
                 ));
             }
         }
@@ -538,11 +552,18 @@ impl PersistentMemory {
 
         if !self.capability_stats.is_empty() {
             let total: u64 = self.capability_stats.values().map(|s| s.total_calls).sum();
-            let avg_success = self.capability_stats.values()
+            let avg_success = self
+                .capability_stats
+                .values()
                 .map(|s| s.success_rate())
-                .sum::<f64>() / self.capability_stats.len() as f64;
-            s.push_str(&format!("\n能力使用统计: {} 个能力, {} 次调用, 平均成功率 {:.0}%\n",
-                self.capability_stats.len(), total, avg_success * 100.0));
+                .sum::<f64>()
+                / self.capability_stats.len() as f64;
+            s.push_str(&format!(
+                "\n能力使用统计: {} 个能力, {} 次调用, 平均成功率 {:.0}%\n",
+                self.capability_stats.len(),
+                total,
+                avg_success * 100.0
+            ));
         }
 
         if !self.genomes.is_empty() {
@@ -735,7 +756,7 @@ mod tests {
         assert_eq!(stat.total_calls, 3);
         assert_eq!(stat.successes, 2);
         assert_eq!(stat.failures, 1);
-        assert!((stat.success_rate() - 2.0/3.0).abs() < 0.01);
+        assert!((stat.success_rate() - 2.0 / 3.0).abs() < 0.01);
         assert!(stat.avg_latency_ms > 50.0);
     }
 
@@ -780,12 +801,15 @@ mod tests {
         std::fs::create_dir_all(&tmp).ok();
         {
             let mut mem = PersistentMemory::load(&tmp);
-            mem.record_success("测试任务", &[TemplateStep {
-                name: "s1".into(),
-                capability: "cap".into(),
-                action: "act".into(),
-                input: serde_json::json!({}),
-            }]);
+            mem.record_success(
+                "测试任务",
+                &[TemplateStep {
+                    name: "s1".into(),
+                    capability: "cap".into(),
+                    action: "act".into(),
+                    input: serde_json::json!({}),
+                }],
+            );
             mem.save(&tmp);
         }
         let mem2 = PersistentMemory::load(&tmp);

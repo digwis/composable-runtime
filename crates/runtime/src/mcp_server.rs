@@ -6,9 +6,7 @@
 //! - 与 CLI 共享同一份 genomes.json 存储
 //! - server 内部用 LlmExecutor 调 LLM，行为与 CLI 完全一致
 
-use crate::auto_evolve::{
-    AutoEvolver, IntrospectionReport, MutationPlan, WeakCapability,
-};
+use crate::auto_evolve::{AutoEvolver, IntrospectionReport, MutationPlan, WeakCapability};
 use crate::evolution::EvolutionEngine;
 use crate::genome::{CapabilityGenome, LlmExecutor, ScriptedCapability};
 use crate::message_bus::MessageBus;
@@ -43,7 +41,7 @@ struct McpEvolutionState {
 /// 异步任务状态
 #[derive(Debug, Clone, Serialize)]
 struct TaskStatus {
-    status: String,       // "running" | "completed" | "failed"
+    status: String, // "running" | "completed" | "failed"
     round: u32,
     last_actions: Vec<String>,
     error: Option<String>,
@@ -93,13 +91,19 @@ impl McpServer {
             }
             let response = self.handle_request(&line).await;
             if let Some(resp) = response {
-                let serialized = serde_json::to_string(&resp)
-                    .map_err(|e| format!("序列化响应失败: {}", e))?;
-                stdout.write_all(serialized.as_bytes()).await
+                let serialized =
+                    serde_json::to_string(&resp).map_err(|e| format!("序列化响应失败: {}", e))?;
+                stdout
+                    .write_all(serialized.as_bytes())
+                    .await
                     .map_err(|e| format!("写入 stdout 失败: {}", e))?;
-                stdout.write_all(b"\n").await
+                stdout
+                    .write_all(b"\n")
+                    .await
                     .map_err(|e| format!("写入 stdout 失败: {}", e))?;
-                stdout.flush().await
+                stdout
+                    .flush()
+                    .await
                     .map_err(|e| format!("flush stdout 失败: {}", e))?;
             }
         }
@@ -145,8 +149,8 @@ impl McpServer {
             Ok(value) => {
                 // tools/call 的结果包装成 MCP content 格式
                 let result_value = if is_tool_call {
-                    let text = serde_json::to_string_pretty(&value)
-                        .unwrap_or_else(|_| value.to_string());
+                    let text =
+                        serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string());
                     serde_json::json!({
                         "content": [{ "type": "text", "text": text }],
                         "isError": false
@@ -270,12 +274,15 @@ impl McpServer {
         if self.state.llm.has_llm_backend() {
             Ok(())
         } else {
-            Err("此工具需要 LLM 后端，但未配置 api_key 且未使用 devin 模式。\n\
+            Err(
+                "此工具需要 LLM 后端，但未配置 api_key 且未使用 devin 模式。\n\
                  请使用 client-side 路径替代：\n  \
                  - get_failure_context + apply_mutation\n  \
                  - get_gap_context + register_genome\n  \
                  - get_exploration_context + register_genome\n  \
-                 - get_crossover_candidates + register_genome".into())
+                 - get_crossover_candidates + register_genome"
+                    .into(),
+            )
         }
     }
 
@@ -283,20 +290,22 @@ impl McpServer {
         let evolver = self.state.auto_evolver.lock().await;
         let evolution = self.state.evolution.lock().await;
         let report: IntrospectionReport = evolver.introspect(&evolution);
-        Ok(serde_json::to_value(&report).map_err(|e| e.to_string())?)
+        serde_json::to_value(&report).map_err(|e| e.to_string())
     }
 
     async fn tool_get_capability_genome(&self, params: &ToolsCallParams) -> Result<Value, String> {
         let name = params.get_string("name")?;
         let evolution = self.state.evolution.lock().await;
-        let genome = evolution.genomes().get(&name)
+        let genome = evolution
+            .genomes()
+            .get(&name)
             .ok_or_else(|| format!("能力 '{}' 不存在", name))?;
-        Ok(serde_json::to_value(genome).map_err(|e| e.to_string())?)
+        serde_json::to_value(genome).map_err(|e| e.to_string())
     }
 
     async fn tool_get_evolution_stats(&self) -> Result<Value, String> {
         let evolver = self.state.auto_evolver.lock().await;
-        Ok(serde_json::to_value(evolver.stats()).map_err(|e| e.to_string())?)
+        serde_json::to_value(evolver.stats()).map_err(|e| e.to_string())
     }
 
     async fn tool_list_capabilities(&self) -> Result<Value, String> {
@@ -318,9 +327,11 @@ impl McpServer {
     async fn tool_get_genome_lineage(&self, params: &ToolsCallParams) -> Result<Value, String> {
         let name = params.get_string("name")?;
         let evolution = self.state.evolution.lock().await;
-        let genome = evolution.genomes().get(&name)
+        let genome = evolution
+            .genomes()
+            .get(&name)
             .ok_or_else(|| format!("能力 '{}' 不存在", name))?;
-        Ok(serde_json::to_value(&genome.lineage).map_err(|e| e.to_string())?)
+        serde_json::to_value(&genome.lineage).map_err(|e| e.to_string())
     }
 
     // ===== 单步进化工具 =====
@@ -339,7 +350,9 @@ impl McpServer {
 
         // 构造 WeakCapability（从 genome 中查找）
         let evolution = self.state.evolution.lock().await;
-        let genome = evolution.genomes().get(&capability)
+        let genome = evolution
+            .genomes()
+            .get(&capability)
             .ok_or_else(|| format!("能力 '{}' 不存在", capability))?;
         let weak = WeakCapability {
             name: capability.clone(),
@@ -364,7 +377,6 @@ impl McpServer {
 
     /// 注意：attribute_failure 内部使用 `?` on Result，但签名返回 Option
     /// 这是 auto_evolve.rs 的原始设计，MCP 层不改动它，直接传播 Option
-
     async fn tool_test_capability(&self, params: &ToolsCallParams) -> Result<Value, String> {
         let name = params.get_string("name")?;
         let evolver = self.state.auto_evolver.lock().await;
@@ -385,7 +397,9 @@ impl McpServer {
         const NEW_CAP_THRESHOLD: u32 = 20;
         const FAILED_CAP_THRESHOLD: u32 = 5;
         let mut eliminated = Vec::new();
-        let to_eliminate: Vec<String> = evolution.genomes().iter()
+        let to_eliminate: Vec<String> = evolution
+            .genomes()
+            .iter()
             .filter(|(_, g)| {
                 let real_calls = g.fitness.real_call_count();
                 let threshold = if real_calls == 0 {
@@ -431,7 +445,9 @@ impl McpServer {
         let paradigm_shift = params.get_bool("paradigm_shift").unwrap_or(false);
         let evolver = self.state.auto_evolver.lock().await;
         let mut evolution = self.state.evolution.lock().await;
-        let created = evolver.explore_new_capability(&mut evolution, paradigm_shift).await;
+        let created = evolver
+            .explore_new_capability(&mut evolution, paradigm_shift)
+            .await;
         Ok(serde_json::json!({ "created": created }))
     }
 
@@ -444,8 +460,7 @@ impl McpServer {
     }
 
     async fn tool_apply_mutation(&self, params: &ToolsCallParams) -> Result<Value, String> {
-        let plan_json = params.arguments.get("plan")
-            .ok_or("缺少 plan 参数")?;
+        let plan_json = params.arguments.get("plan").ok_or("缺少 plan 参数")?;
         let plan: MutationPlan = serde_json::from_value(plan_json.clone())
             .map_err(|e| format!("MutationPlan 反序列化失败: {}", e))?;
         let evolver = self.state.auto_evolver.lock().await;
@@ -476,12 +491,15 @@ impl McpServer {
         // 初始化任务状态
         {
             let mut tasks = self.state.tasks.lock().await;
-            tasks.insert(task_id.clone(), TaskStatus {
-                status: "running".into(),
-                round: 0,
-                last_actions: vec![],
-                error: None,
-            });
+            tasks.insert(
+                task_id.clone(),
+                TaskStatus {
+                    status: "running".into(),
+                    round: 0,
+                    last_actions: vec![],
+                    error: None,
+                },
+            );
         }
 
         // 启动后台任务
@@ -490,9 +508,13 @@ impl McpServer {
         let state_for_error = state.clone();
         tokio::spawn(async move {
             let result = run_continuous_task(
-                state, task_id_clone.clone(),
-                max_rounds, idle_threshold, interval_secs,
-            ).await;
+                state,
+                task_id_clone.clone(),
+                max_rounds,
+                idle_threshold,
+                interval_secs,
+            )
+            .await;
             if let Err(e) = result {
                 let mut tasks = state_for_error.tasks.lock().await;
                 if let Some(status) = tasks.get_mut(&task_id_clone) {
@@ -508,9 +530,10 @@ impl McpServer {
     async fn tool_get_task_status(&self, params: &ToolsCallParams) -> Result<Value, String> {
         let task_id = params.get_string("task_id")?;
         let tasks = self.state.tasks.lock().await;
-        let status = tasks.get(&task_id)
+        let status = tasks
+            .get(&task_id)
             .ok_or_else(|| format!("任务 '{}' 不存在", task_id))?;
-        Ok(serde_json::to_value(status).map_err(|e| e.to_string())?)
+        serde_json::to_value(status).map_err(|e| e.to_string())
     }
 
     // ===== 管理工具 =====
@@ -552,7 +575,9 @@ impl McpServer {
         let action = params.get_string("action")?;
 
         let evolution = self.state.evolution.lock().await;
-        let genome = evolution.genomes().get(&capability)
+        let genome = evolution
+            .genomes()
+            .get(&capability)
             .ok_or_else(|| format!("能力 '{}' 不存在", capability))?;
 
         // 构造表现数据（与 auto_evolve.rs::attribute_failure 一致）
@@ -614,7 +639,9 @@ impl McpServer {
         let (os, arch, tools) = {
             let evolver = self.state.auto_evolver.lock().await;
             let platform = evolver.platform();
-            let tools: Vec<String> = platform.env.iter()
+            let tools: Vec<String> = platform
+                .env
+                .iter()
                 .filter(|(k, v)| k.starts_with("has_") && v.as_str() == "true")
                 .map(|(k, _)| k.strip_prefix("has_").unwrap_or(k).to_string())
                 .collect();
@@ -662,20 +689,41 @@ impl McpServer {
     ///
     /// 客户端分析当前能力库的认知边界后，提出新能力方向并构造基因组，
     /// 然后调用 register_genome 注册。
-    async fn tool_get_exploration_context(&self, params: &ToolsCallParams) -> Result<Value, String> {
+    async fn tool_get_exploration_context(
+        &self,
+        params: &ToolsCallParams,
+    ) -> Result<Value, String> {
         let paradigm_shift = params.get_bool("paradigm_shift").unwrap_or(false);
 
         // 锁顺序统一：auto_evolver → evolution
         let (all_tools, cap_summary) = {
             let evolver = self.state.auto_evolver.lock().await;
             let platform = evolver.platform();
-            let all_tools: Vec<String> = platform.env.iter()
-                .filter(|(k, v)| (k.starts_with("has_") || k.starts_with("has_py_")) && v.as_str() == "true")
-                .map(|(k, _)| k.strip_prefix("has_").or_else(|| k.strip_prefix("has_py_")).unwrap_or(k).to_string())
+            let all_tools: Vec<String> = platform
+                .env
+                .iter()
+                .filter(|(k, v)| {
+                    (k.starts_with("has_") || k.starts_with("has_py_")) && v.as_str() == "true"
+                })
+                .map(|(k, _)| {
+                    k.strip_prefix("has_")
+                        .or_else(|| k.strip_prefix("has_py_"))
+                        .unwrap_or(k)
+                        .to_string()
+                })
                 .collect();
             let evolution = self.state.evolution.lock().await;
-            let cap_summary: Vec<String> = evolution.genomes().values()
-                .map(|g| format!("{}: {} [{}]", g.name, g.description, g.action_names().join(",")))
+            let cap_summary: Vec<String> = evolution
+                .genomes()
+                .values()
+                .map(|g| {
+                    format!(
+                        "{}: {} [{}]",
+                        g.name,
+                        g.description,
+                        g.action_names().join(",")
+                    )
+                })
                 .collect();
             (all_tools, cap_summary)
         };
@@ -722,7 +770,12 @@ impl McpServer {
         if sorted.len() < 2 {
             return Err("能力库不足 2 个，无法交叉重组".into());
         }
-        sorted.sort_by(|a, b| b.fitness.score.partial_cmp(&a.fitness.score).unwrap_or(std::cmp::Ordering::Equal));
+        sorted.sort_by(|a, b| {
+            b.fitness
+                .score
+                .partial_cmp(&a.fitness.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         let parent1 = &sorted[0];
         let parent2 = &sorted[1];
 
@@ -768,8 +821,7 @@ impl McpServer {
     /// 用于 MCP 原生路径：客户端设计好基因组后直接注册。
     /// 与 fill_gap/explore_new_capability/crossover_capabilities 的注册逻辑一致。
     async fn tool_register_genome(&self, params: &ToolsCallParams) -> Result<Value, String> {
-        let genome_json = params.arguments.get("genome")
-            .ok_or("缺少 genome 参数")?;
+        let genome_json = params.arguments.get("genome").ok_or("缺少 genome 参数")?;
         let genome: CapabilityGenome = serde_json::from_value(genome_json.clone())
             .map_err(|e| format!("CapabilityGenome 反序列化失败: {}", e))?;
 
@@ -875,25 +927,25 @@ struct ToolsCallParams {
 
 impl ToolsCallParams {
     fn get_string(&self, key: &str) -> Result<String, String> {
-        self.arguments.get(key)
+        self.arguments
+            .get(key)
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
             .ok_or_else(|| format!("缺少参数: {}", key))
     }
 
     fn get_bool(&self, key: &str) -> Option<bool> {
-        self.arguments.get(key)
-            .and_then(|v| v.as_bool())
+        self.arguments.get(key).and_then(|v| v.as_bool())
     }
 
     fn get_u32(&self, key: &str) -> Option<u32> {
-        self.arguments.get(key)
+        self.arguments
+            .get(key)
             .and_then(|v| v.as_u64())
             .map(|v| v as u32)
     }
 
     fn get_u64(&self, key: &str) -> Option<u64> {
-        self.arguments.get(key)
-            .and_then(|v| v.as_u64())
+        self.arguments.get(key).and_then(|v| v.as_u64())
     }
 }

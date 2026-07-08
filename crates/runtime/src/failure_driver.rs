@@ -1,5 +1,5 @@
-use crate::ab_test::{ABTester, ABTestRecommendation, ABTestResult};
-use crate::genome::{CapabilityGenome, ActionImpl, LlmExecutor};
+use crate::ab_test::{ABTestRecommendation, ABTestResult, ABTester};
+use crate::genome::{ActionImpl, CapabilityGenome, LlmExecutor};
 use crate::sandbox::Sandbox;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -66,7 +66,9 @@ impl FailureDriver {
     pub fn record_failure(&mut self, event: FailureEvent) {
         tracing::warn!(
             "失败驱动: 记录失败 — 任务='{}', 能力='{}', 错误='{}'",
-            event.task, event.capability, event.error
+            event.task,
+            event.capability,
+            event.error
         );
         self.failures.push(event);
     }
@@ -128,10 +130,7 @@ impl FailureDriver {
     /// 合成新能力基因组
     ///
     /// 用 LLM 根据缺口描述生成完整的能力基因组
-    pub async fn synthesize_capability(
-        &self,
-        gap: &CapabilityGap,
-    ) -> Option<CapabilityGenome> {
+    pub async fn synthesize_capability(&self, gap: &CapabilityGap) -> Option<CapabilityGenome> {
         let prompt = format!(
             r#"你是能力运行时的能力合成器。需要创建一个新能力来填补以下缺口：
 
@@ -256,7 +255,11 @@ impl FailureDriver {
                 passed: false,
                 sandbox_result: Some(sandbox_result),
                 ab_test_result: None,
-                reason: format!("对抗测试失败率过高: {}/{}", adv_failures, adversarial_results.len()),
+                reason: format!(
+                    "对抗测试失败率过高: {}/{}",
+                    adv_failures,
+                    adversarial_results.len()
+                ),
             };
         }
 
@@ -267,14 +270,11 @@ impl FailureDriver {
                     let test_suite = self
                         .ab_tester
                         .generate_test_suite(&action.input_schema, test_input);
-                    let ab_result = self
-                        .ab_tester
-                        .run_test(old_code, code, &test_suite)
-                        .await;
+                    let ab_result = self.ab_tester.run_test(old_code, code, &test_suite).await;
 
                     let passed = match &ab_result.recommendation {
                         ABTestRecommendation::Promote => true,
-                        ABTestRecommendation::Keep => true,  // 新版本不比旧版差，可以保留
+                        ABTestRecommendation::Keep => true, // 新版本不比旧版差，可以保留
                         ABTestRecommendation::Rollback => false,
                         ABTestRecommendation::InsufficientData => true, // 数据不足时保守通过
                     };
@@ -304,9 +304,7 @@ impl FailureDriver {
     /// 完整的失败驱动进化循环
     ///
     /// 分析失败 → 识别缺口 → 合成能力 → 验证 → 返回可注册的能力
-    pub async fn evolve_from_failures(
-        &mut self,
-    ) -> Vec<EvolutionOutcome> {
+    pub async fn evolve_from_failures(&mut self) -> Vec<EvolutionOutcome> {
         let mut outcomes = vec![];
 
         // 1. 分析缺口
@@ -345,7 +343,11 @@ impl FailureDriver {
         let action = &genome.actions[0];
         let mut test = serde_json::Map::new();
 
-        if let Some(props) = action.input_schema.get("properties").and_then(|p| p.as_object()) {
+        if let Some(props) = action
+            .input_schema
+            .get("properties")
+            .and_then(|p| p.as_object())
+        {
             for (key, schema) in props {
                 let desc = schema
                     .get("description")

@@ -8,10 +8,12 @@
 //! 5. MetaEvolver — 元进化报告（不需要 LLM）
 //! 6. 代码渲染 — Python / WASM / Native 模板
 
-use runtime::meta_evolve::{ExecutorRegistry, CustomExecutorSpec, ExecutorLineage, ExecutorContext};
-use runtime::platform::Platform;
-use runtime::genome::{CapabilityGenome, ActionGene, ActionImpl, ScriptedCapability};
+use runtime::genome::{ActionGene, ActionImpl, CapabilityGenome, ScriptedCapability};
 use runtime::message_bus::MessageBus;
+use runtime::meta_evolve::{
+    CustomExecutorSpec, ExecutorContext, ExecutorLineage, ExecutorRegistry,
+};
+use runtime::platform::Platform;
 use std::sync::Arc;
 
 fn make_executor(name: &str, language: &str, code: &str) -> CustomExecutorSpec {
@@ -32,14 +34,33 @@ async fn test_01_platform_detection() {
     let platform = Platform::detect();
     println!("\n=== 1. 平台检测 ===");
     println!("  OS: {} ({})", platform.os, platform.arch);
-    println!("  has_rustc: {}", platform.env.get("has_rustc").unwrap_or(&"false".into()));
-    println!("  has_wasmtime: {}", platform.env.get("has_wasmtime").unwrap_or(&"false".into()));
-    println!("  has_wasm32_wasi: {}", platform.env.get("has_wasm32_wasi").unwrap_or(&"false".into()));
-    println!("  has_python3: {}", platform.env.get("has_python3").unwrap_or(&"false".into()));
+    println!(
+        "  has_rustc: {}",
+        platform.env.get("has_rustc").unwrap_or(&"false".into())
+    );
+    println!(
+        "  has_wasmtime: {}",
+        platform.env.get("has_wasmtime").unwrap_or(&"false".into())
+    );
+    println!(
+        "  has_wasm32_wasi: {}",
+        platform
+            .env
+            .get("has_wasm32_wasi")
+            .unwrap_or(&"false".into())
+    );
+    println!(
+        "  has_python3: {}",
+        platform.env.get("has_python3").unwrap_or(&"false".into())
+    );
 
     assert!(platform.supports_process, "需要进程支持");
     assert!(
-        platform.env.get("has_python3").map(|v| v == "true").unwrap_or(false),
+        platform
+            .env
+            .get("has_python3")
+            .map(|v| v == "true")
+            .unwrap_or(false),
         "需要 python3"
     );
     println!("  ✅ 平台检测通过");
@@ -80,12 +101,14 @@ async fn test_03_python_executor() {
         capability_name: "test_cap".into(),
         action_name: "test_action".into(),
     };
-    let result = registry.execute(
-        "echo_py",
-        &serde_json::json!({"key": "value"}),
-        &serde_json::json!({"task": "hello"}),
-        &ctx,
-    ).await;
+    let result = registry
+        .execute(
+            "echo_py",
+            &serde_json::json!({"key": "value"}),
+            &serde_json::json!({"task": "hello"}),
+            &ctx,
+        )
+        .await;
 
     println!("  结果: {:?}", result);
     assert!(result.is_ok(), "Python 执行器应成功");
@@ -99,12 +122,23 @@ async fn test_03_python_executor() {
 async fn test_04_rust_wasm_executor() {
     println!("\n=== 4. Rust/WASM 执行器 ===");
     let platform = Platform::detect();
-    let has_wasmtime = platform.env.get("has_wasmtime").map(|v| v == "true").unwrap_or(false);
-    let has_wasi = platform.env.get("has_wasm32_wasi").map(|v| v == "true").unwrap_or(false);
+    let has_wasmtime = platform
+        .env
+        .get("has_wasmtime")
+        .map(|v| v == "true")
+        .unwrap_or(false);
+    let has_wasi = platform
+        .env
+        .get("has_wasm32_wasi")
+        .map(|v| v == "true")
+        .unwrap_or(false);
 
     if !has_wasmtime || !has_wasi {
         println!("  ⏭️  跳过: 需要 wasmtime + wasm32-wasi target");
-        println!("    has_wasmtime={}, has_wasm32_wasi={}", has_wasmtime, has_wasi);
+        println!(
+            "    has_wasmtime={}, has_wasm32_wasi={}",
+            has_wasmtime, has_wasi
+        );
         return;
     }
 
@@ -128,18 +162,22 @@ async fn test_04_rust_wasm_executor() {
     println!("{{\"success\": true, \"lang\": \"wasm\", \"input_len\": {}}}", __input.len());
 "#;
 
-    registry.register(make_executor("echo_wasm", "rust", code)).await;
+    registry
+        .register(make_executor("echo_wasm", "rust", code))
+        .await;
 
     let ctx = ExecutorContext {
         capability_name: "test_cap".into(),
         action_name: "test_action".into(),
     };
-    let result = registry.execute(
-        "echo_wasm",
-        &serde_json::json!({}),
-        &serde_json::json!({"task": "compute"}),
-        &ctx,
-    ).await;
+    let result = registry
+        .execute(
+            "echo_wasm",
+            &serde_json::json!({}),
+            &serde_json::json!({"task": "compute"}),
+            &ctx,
+        )
+        .await;
 
     println!("  结果: {:?}", result);
     assert!(result.is_ok(), "WASM 执行器应成功");
@@ -153,7 +191,11 @@ async fn test_04_rust_wasm_executor() {
 async fn test_05_rust_native_executor() {
     println!("\n=== 5. Rust/Native 执行器（热加载） ===");
     let platform = Platform::detect();
-    let has_rustc = platform.env.get("has_rustc").map(|v| v == "true").unwrap_or(false);
+    let has_rustc = platform
+        .env
+        .get("has_rustc")
+        .map(|v| v == "true")
+        .unwrap_or(false);
     if !has_rustc {
         println!("  ⏭️  跳过: 需要 rustc");
         return;
@@ -167,18 +209,22 @@ async fn test_05_rust_native_executor() {
     __output = format!("{{\"success\": true, \"lang\": \"native\", \"input_len\": {}}}", __input.len());
 "#;
 
-    registry.register(make_executor("echo_native", "rust_native", code)).await;
+    registry
+        .register(make_executor("echo_native", "rust_native", code))
+        .await;
 
     let ctx = ExecutorContext {
         capability_name: "test_cap".into(),
         action_name: "test_action".into(),
     };
-    let result = registry.execute(
-        "echo_native",
-        &serde_json::json!({}),
-        &serde_json::json!({"task": "native_test"}),
-        &ctx,
-    ).await;
+    let result = registry
+        .execute(
+            "echo_native",
+            &serde_json::json!({}),
+            &serde_json::json!({"task": "native_test"}),
+            &ctx,
+        )
+        .await;
 
     println!("  结果: {:?}", result);
     assert!(result.is_ok(), "Native 执行器应成功: {:?}", result);
@@ -192,14 +238,18 @@ async fn test_05_rust_native_executor() {
     let code2 = r#"
     __output = format!("{{\"success\": true, \"lang\": \"native_v2\", \"input_len\": {}}}", __input.len());
 "#;
-    let _ = registry.mutate_executor("echo_native", code2.to_string(), None).await;
+    let _ = registry
+        .mutate_executor("echo_native", code2.to_string(), None)
+        .await;
 
-    let result2 = registry.execute(
-        "echo_native",
-        &serde_json::json!({}),
-        &serde_json::json!({"task": "hot_swap"}),
-        &ctx,
-    ).await;
+    let result2 = registry
+        .execute(
+            "echo_native",
+            &serde_json::json!({}),
+            &serde_json::json!({"task": "hot_swap"}),
+            &ctx,
+        )
+        .await;
 
     println!("  热替换结果: {:?}", result2);
     assert!(result2.is_ok());
@@ -287,7 +337,10 @@ async fn test_07_scripted_capability_custom_executor() {
     println!("  响应: {:?}", response);
     assert!(response.is_ok(), "Custom 执行器能力应成功");
     let resp = response.unwrap();
-    println!("  payload: {}", serde_json::to_string_pretty(&resp.payload).unwrap());
+    println!(
+        "  payload: {}",
+        serde_json::to_string_pretty(&resp.payload).unwrap()
+    );
     println!("  ✅ ScriptedCapability + Custom 通过");
 }
 
@@ -297,20 +350,28 @@ async fn test_08_executor_registry_report() {
     let tmp_dir = std::env::temp_dir().join(format!("evo_test_{}", uuid::Uuid::new_v4()));
     let registry = Arc::new(ExecutorRegistry::new(&tmp_dir));
 
-    registry.register(make_executor(
-        "report_test",
-        "python",
-        "print(json.dumps({'ok': True}))",
-    )).await;
+    registry
+        .register(make_executor(
+            "report_test",
+            "python",
+            "print(json.dumps({'ok': True}))",
+        ))
+        .await;
 
     let spec = registry.spec().await;
     println!("  自定义执行器数: {}", spec.custom_executors.len());
     println!("  元进化事件数: {}", spec.meta_history.len());
     println!("  执行器列表:");
     for e in &spec.custom_executors {
-        println!("    • {} [{}] gen={} — {}", e.type_name, e.language, e.lineage.generation, e.description);
+        println!(
+            "    • {} [{}] gen={} — {}",
+            e.type_name, e.language, e.lineage.generation, e.description
+        );
     }
-    assert!(spec.custom_executors.iter().any(|e| e.type_name == "report_test"));
+    assert!(spec
+        .custom_executors
+        .iter()
+        .any(|e| e.type_name == "report_test"));
     println!("  ✅ ExecutorRegistry 报告通过");
 }
 
@@ -328,17 +389,13 @@ async fn test_09_code_renderers() {
     println!("  ✅ Python 渲染通过");
 
     // WASM
-    let wasm = runtime::meta_evolve::render_rust_wasm_code(
-        r#"println!("hello");"#,
-    );
+    let wasm = runtime::meta_evolve::render_rust_wasm_code(r#"println!("hello");"#);
     assert!(wasm.contains("fn main()"));
     assert!(wasm.contains("__input"));
     println!("  ✅ WASM 渲染通过");
 
     // Native
-    let native = runtime::meta_evolve::render_rust_native_code(
-        r#"__output = "ok".to_string();"#,
-    );
+    let native = runtime::meta_evolve::render_rust_native_code(r#"__output = "ok".to_string();"#);
     assert!(native.contains("#[no_mangle]"));
     assert!(native.contains("extern \"C\""));
     assert!(native.contains("execute"));
@@ -354,18 +411,23 @@ async fn test_10_executor_mutation_and_elimination() {
     let registry = ExecutorRegistry::new(&tmp_dir);
 
     // 注册
-    registry.register(make_executor(
-        "mutate_me",
-        "python",
-        "print(json.dumps({'version': 1}))",
-    )).await;
+    registry
+        .register(make_executor(
+            "mutate_me",
+            "python",
+            "print(json.dumps({'version': 1}))",
+        ))
+        .await;
 
     // 变异
-    registry.mutate_executor(
-        "mutate_me",
-        "print(json.dumps({'version': 2}))".into(),
-        Some("v2".into()),
-    ).await.unwrap();
+    registry
+        .mutate_executor(
+            "mutate_me",
+            "print(json.dumps({'version': 2}))".into(),
+            Some("v2".into()),
+        )
+        .await
+        .unwrap();
 
     let spec = registry.spec().await;
     let exec = spec.get_executor("mutate_me").unwrap();

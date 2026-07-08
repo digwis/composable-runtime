@@ -50,11 +50,8 @@ impl Platform {
 
         // 检测可用的运行时和工具
         for tool in &[
-            "python3", "node", "git", "docker",
-            "curl", "wget", "sqlite3", "jq", "ffmpeg",
-            "rg", "fd", "fzf", "tmux", "ssh",
-            "make", "cmake", "rustc", "cargo",
-            "brew", "pip3", "npm",
+            "python3", "node", "git", "docker", "curl", "wget", "sqlite3", "jq", "ffmpeg", "rg",
+            "fd", "fzf", "tmux", "ssh", "make", "cmake", "rustc", "cargo", "brew", "pip3", "npm",
             "wasmtime",
         ] {
             if which(tool) {
@@ -65,7 +62,7 @@ impl Platform {
         // 检测 rustc 的 wasm32-wasi target（兼容新旧名称）
         if which("rustc") {
             let has_wasi = std::process::Command::new("rustc")
-                .args(&["--print", "target-list"])
+                .args(["--print", "target-list"])
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::null())
                 .output()
@@ -82,9 +79,17 @@ impl Platform {
 
         // 检测可用的 Python 包
         if which("python3") {
-            for pkg in &["numpy", "pandas", "requests", "matplotlib", "sympy", "networkx", "sklearn"] {
+            for pkg in &[
+                "numpy",
+                "pandas",
+                "requests",
+                "matplotlib",
+                "sympy",
+                "networkx",
+                "sklearn",
+            ] {
                 let check = std::process::Command::new("python3")
-                    .args(&["-c", &format!("import {}", pkg)])
+                    .args(["-c", &format!("import {}", pkg)])
                     .stdout(std::process::Stdio::null())
                     .stderr(std::process::Stdio::null())
                     .status()
@@ -109,10 +114,7 @@ impl Platform {
 
     /// 平台描述（给 LLM 看）
     pub fn describe(&self) -> String {
-        let mut desc = format!(
-            "运行平台: {} ({})\n",
-            self.os, self.arch
-        );
+        let mut desc = format!("运行平台: {} ({})\n", self.os, self.arch);
         desc.push_str(&format!(
             "  文件系统: {} | 进程: {} | 网络: {}\n",
             if self.supports_fs { "✅" } else { "❌" },
@@ -120,7 +122,9 @@ impl Platform {
             if self.supports_network { "✅" } else { "❌" }
         ));
 
-        let tools: Vec<&str> = self.env.iter()
+        let tools: Vec<&str> = self
+            .env
+            .iter()
             .filter(|(k, _)| k.starts_with("has_"))
             .filter(|(_, v)| v.as_str() == "true")
             .map(|(k, _)| k.strip_prefix("has_").unwrap_or(k))
@@ -158,7 +162,11 @@ impl Platform {
 
     /// 获取平台特定的存储目录
     pub fn storage_dir(&self) -> String {
-        let base = self.env.get("home").cloned().unwrap_or_else(|| ".".to_string());
+        let base = self
+            .env
+            .get("home")
+            .cloned()
+            .unwrap_or_else(|| ".".to_string());
         format!("{}/.evolution", base)
     }
 }
@@ -171,4 +179,173 @@ fn which(cmd: &str) -> bool {
         .status()
         .map(|s| s.success())
         .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::genome::{ActionGene, ActionImpl, CapabilityGenome, FitnessGene, LineageGene};
+
+    #[test]
+    fn test_detect_returns_valid_platform() {
+        let p = Platform::detect();
+        assert!(!p.os.is_empty());
+        assert!(!p.arch.is_empty());
+        assert!(!p.id.is_empty());
+    }
+
+    #[test]
+    fn test_detect_known_os() {
+        let p = Platform::detect();
+        let known = ["macos", "linux", "windows", "android", "ios", "unknown"];
+        assert!(known.contains(&p.os.as_str()));
+    }
+
+    #[test]
+    fn test_detect_env_contains_os() {
+        let p = Platform::detect();
+        assert!(p.env.contains_key("os"));
+        assert!(p.env.contains_key("arch"));
+    }
+
+    #[test]
+    fn test_describe_not_empty() {
+        let p = Platform::detect();
+        let desc = p.describe();
+        assert!(desc.contains("运行平台"));
+        assert!(desc.contains(&p.os));
+    }
+
+    #[test]
+    fn test_describe_with_tools() {
+        let mut env = std::collections::HashMap::new();
+        env.insert("has_git".into(), "true".into());
+        env.insert("has_python3".into(), "true".into());
+        env.insert("os".into(), "linux".into());
+        let p = Platform {
+            os: "linux".into(),
+            arch: "x86_64".into(),
+            id: "linux".into(),
+            supports_process: true,
+            supports_fs: true,
+            supports_network: true,
+            env,
+        };
+        let desc = p.describe();
+        assert!(desc.contains("git"));
+        assert!(desc.contains("python3"));
+    }
+
+    #[test]
+    fn test_is_compatible_composite_empty() {
+        let p = Platform::detect();
+        let genome = CapabilityGenome {
+            name: "test".into(),
+            version: "0.1.0".into(),
+            description: "test".into(),
+            actions: vec![ActionGene {
+                name: "act".into(),
+                description: "test".into(),
+                input_schema: serde_json::json!({}),
+                implementation: ActionImpl::Composite { steps: vec![] },
+            }],
+            fitness: FitnessGene::default(),
+            lineage: LineageGene::default(),
+            test_suite: Vec::new(),
+        };
+        assert!(!p.is_compatible(&genome));
+    }
+
+    #[test]
+    fn test_is_compatible_native_needs_process() {
+        let env = std::collections::HashMap::new();
+        let p = Platform {
+            os: "ios".into(),
+            arch: "arm64".into(),
+            id: "ios".into(),
+            supports_process: false,
+            supports_fs: true,
+            supports_network: true,
+            env,
+        };
+        let genome = CapabilityGenome {
+            name: "native_cap".into(),
+            version: "0.1.0".into(),
+            description: "test".into(),
+            actions: vec![ActionGene {
+                name: "act".into(),
+                description: "test".into(),
+                input_schema: serde_json::json!({}),
+                implementation: ActionImpl::Native {
+                    capability: "shell".into(),
+                    action: "exec".into(),
+                },
+            }],
+            fitness: FitnessGene::default(),
+            lineage: LineageGene::default(),
+            test_suite: Vec::new(),
+        };
+        assert!(!p.is_compatible(&genome));
+    }
+
+    #[test]
+    fn test_is_compatible_rule_always() {
+        let p = Platform::detect();
+        let genome = CapabilityGenome {
+            name: "rule_cap".into(),
+            version: "0.1.0".into(),
+            description: "test".into(),
+            actions: vec![ActionGene {
+                name: "act".into(),
+                description: "test".into(),
+                input_schema: serde_json::json!({}),
+                implementation: ActionImpl::Rule {
+                    template: serde_json::json!({"ok": true}),
+                },
+            }],
+            fitness: FitnessGene::default(),
+            lineage: LineageGene::default(),
+            test_suite: Vec::new(),
+        };
+        assert!(p.is_compatible(&genome));
+    }
+
+    #[test]
+    fn test_storage_dir() {
+        let mut env = std::collections::HashMap::new();
+        env.insert("home".into(), "/tmp/testhome".into());
+        let p = Platform {
+            os: "linux".into(),
+            arch: "x86_64".into(),
+            id: "linux".into(),
+            supports_process: true,
+            supports_fs: true,
+            supports_network: true,
+            env,
+        };
+        assert_eq!(p.storage_dir(), "/tmp/testhome/.evolution");
+    }
+
+    #[test]
+    fn test_storage_dir_no_home() {
+        let p = Platform {
+            os: "linux".into(),
+            arch: "x86_64".into(),
+            id: "linux".into(),
+            supports_process: true,
+            supports_fs: true,
+            supports_network: true,
+            env: std::collections::HashMap::new(),
+        };
+        assert_eq!(p.storage_dir(), "./.evolution");
+    }
+
+    #[test]
+    fn test_platform_serialization() {
+        let p = Platform::detect();
+        let json = serde_json::to_string(&p).unwrap();
+        let decoded: Platform = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.os, p.os);
+        assert_eq!(decoded.arch, p.arch);
+    }
 }

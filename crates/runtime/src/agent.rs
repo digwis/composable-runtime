@@ -189,7 +189,10 @@ impl Agent {
                         continue;
                     }
                     if !self.platform.is_compatible(genome) {
-                        println!("  ⚠️  跳过不兼容能力: {} (平台 {} 不支持)", genome.name, self.platform.id);
+                        println!(
+                            "  ⚠️  跳过不兼容能力: {} (平台 {} 不支持)",
+                            genome.name, self.platform.id
+                        );
                         continue;
                     }
                     let mut cap = crate::genome::ScriptedCapability::from_genome(genome.clone())
@@ -199,7 +202,11 @@ impl Agent {
                         cap = cap.with_executor_registry(registry.clone());
                     }
                     self.orchestrator.bus().register(Arc::new(cap)).await;
-                    println!("  🧬 加载进化能力: {} ({})", genome.name, genome.action_names().join(", "));
+                    println!(
+                        "  🧬 加载进化能力: {} ({})",
+                        genome.name,
+                        genome.action_names().join(", ")
+                    );
                 }
             }
         }
@@ -212,7 +219,7 @@ impl Agent {
         let memory_context = self.memory.summary();
         let evolution_context = if let Some(evo) = &self.evolution {
             let mut ctx = String::from("\n已进化能力基因组:\n");
-            for (_name, genome) in evo.genomes() {
+            for genome in evo.genomes().values() {
                 ctx.push_str(&genome.describe());
             }
             ctx
@@ -222,7 +229,12 @@ impl Agent {
 
         // 3. 构建系统提示
         let platform_context = self.platform.describe();
-        let system_prompt = self.build_system_prompt(&cap_description, &memory_context, &evolution_context, &platform_context);
+        let system_prompt = self.build_system_prompt(
+            &cap_description,
+            &memory_context,
+            &evolution_context,
+            &platform_context,
+        );
 
         // 4. 初始化对话
         let mut context: HashMap<String, serde_json::Value> = HashMap::new();
@@ -262,27 +274,33 @@ impl Agent {
                     match serde_json::from_value::<CapabilityGenome>(genome_json.clone()) {
                         Ok(genome) => {
                             let cap_name = genome.name.clone();
-                            println!("  🧬 创造新能力: {} ({})", cap_name, genome.action_names().join(", "));
+                            println!(
+                                "  🧬 创造新能力: {} ({})",
+                                cap_name,
+                                genome.action_names().join(", ")
+                            );
                             evo.register_genome(genome);
                             if let Some(llm) = &self.llm_executor {
                                 let bus = self.orchestrator.bus().clone();
                                 let mut cap = crate::genome::ScriptedCapability::from_genome(
-                                    evo.genomes().get(&cap_name).unwrap().clone()
-                                ).with_llm(llm.clone())
-                                 .with_bus(bus);
+                                    evo.genomes().get(&cap_name).unwrap().clone(),
+                                )
+                                .with_llm(llm.clone())
+                                .with_bus(bus);
                                 if let Some(registry) = &self.executor_registry {
                                     cap = cap.with_executor_registry(registry.clone());
                                 }
                                 self.orchestrator.bus().register(Arc::new(cap)).await;
                             }
                             capabilities_created.push(cap_name);
-                            self.memory.record_evolution(crate::memory::EvolutionRecord {
-                                event_type: "generation".into(),
-                                capability: capabilities_created.last().unwrap().clone(),
-                                description: "AI 生成新能力".into(),
-                                generation: 1,
-                                timestamp: now_string(),
-                            });
+                            self.memory
+                                .record_evolution(crate::memory::EvolutionRecord {
+                                    event_type: "generation".into(),
+                                    capability: capabilities_created.last().unwrap().clone(),
+                                    description: "AI 生成新能力".into(),
+                                    generation: 1,
+                                    timestamp: now_string(),
+                                });
                         }
                         Err(e) => {
                             println!("  ⚠️  能力基因组解析失败: {}", e);
@@ -296,22 +314,29 @@ impl Agent {
                 if let Some(evo) = &mut self.evolution {
                     if let Some(new_prompt) = &mutate_req.new_prompt {
                         if let Some(action) = &mutate_req.action {
-                            let result = evo.mutate(&mutate_req.capability,
+                            let result = evo.mutate(
+                                &mutate_req.capability,
                                 crate::evolution::Mutation::PromptChange {
                                     action: action.clone(),
                                     new_prompt: new_prompt.clone(),
-                                });
+                                },
+                            );
                             if let Ok(new_genome) = result {
-                                println!("  🧬 变异能力: {} → {}", mutate_req.capability, new_genome.name);
+                                println!(
+                                    "  🧬 变异能力: {} → {}",
+                                    mutate_req.capability, new_genome.name
+                                );
                                 capabilities_created.push(new_genome.name.clone());
                             }
                         }
                     }
                     if let Some(new_desc) = &mutate_req.new_description {
-                        let _ = evo.mutate(&mutate_req.capability,
+                        let _ = evo.mutate(
+                            &mutate_req.capability,
                             crate::evolution::Mutation::DescriptionChange {
                                 new_description: new_desc.clone(),
-                            });
+                            },
+                        );
                     }
                 }
             }
@@ -348,7 +373,11 @@ impl Agent {
 
                 println!("  ▶️  执行: {} -> {}:{}", step_name, cap_name, action_name);
 
-                match self.orchestrator.execute_json(step_json.clone(), &context).await {
+                match self
+                    .orchestrator
+                    .execute_json(step_json.clone(), &context)
+                    .await
+                {
                     Ok((output, retries, failed)) => {
                         let retries_str = if retries > 0 {
                             format!(" (重试 {} 次)", retries)
@@ -362,19 +391,14 @@ impl Agent {
 
                             self.memory.record_failure(task, &step_name, &err);
 
-                            context.insert(
-                                step_name.clone(),
-                                serde_json::json!({"error": err}),
+                            context.insert(step_name.clone(), serde_json::json!({"error": err}));
+                        } else if let Ok(ref payload) = output.result {
+                            println!(
+                                "  ✅ 成功{}: {}",
+                                retries_str,
+                                serde_json::to_string(payload).unwrap_or_default()
                             );
-                        } else {
-                            if let Ok(ref payload) = output.result {
-                                println!(
-                                    "  ✅ 成功{}: {}",
-                                    retries_str,
-                                    serde_json::to_string(payload).unwrap_or_default()
-                                );
-                                context.insert(step_name.clone(), payload.clone());
-                            }
+                            context.insert(step_name.clone(), payload.clone());
                         }
 
                         all_outputs.push(output);
@@ -546,7 +570,9 @@ impl Agent {
         if let Some(template) = self.memory.find_template(task) {
             format!(
                 "找到匹配的工作流模板: '{}' (成功 {} 次, {} 步)",
-                template.task, template.success_count, template.steps.len()
+                template.task,
+                template.success_count,
+                template.steps.len()
             )
         } else {
             self.memory.summary()
@@ -554,7 +580,13 @@ impl Agent {
     }
 
     /// 构建系统提示
-    fn build_system_prompt(&self, capabilities: &str, memory: &str, evolution: &str, platform: &str) -> String {
+    fn build_system_prompt(
+        &self,
+        capabilities: &str,
+        memory: &str,
+        evolution: &str,
+        platform: &str,
+    ) -> String {
         format!(
             r#"你是一个运行在可组合能力运行时上的自我进化 AI Agent。
 
@@ -757,9 +789,7 @@ Script 和 Composite 中可以用 {{{{var}}}} 引用输入参数，Composite 步
         // 解析 JSON（LLM 可能返回带 markdown 代码块的 JSON）
         let json_str = extract_json(&text);
         let plan: LlmPlan = serde_json::from_str(json_str)
-            .map_err(|e| {
-                anyhow::anyhow!("LLM 返回解析失败: {} | 原始: {}", e, text)
-            })?;
+            .map_err(|e| anyhow::anyhow!("LLM 返回解析失败: {} | 原始: {}", e, text))?;
 
         Ok(plan)
     }
@@ -811,7 +841,7 @@ impl LlmClient {
         }
 
         let result = tokio::process::Command::new(&self.cli_cmd)
-            .args(&["-p", &full_prompt, "--model", &self.cli_model])
+            .args(["-p", &full_prompt, "--model", &self.cli_model])
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .output()
