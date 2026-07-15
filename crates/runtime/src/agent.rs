@@ -1,5 +1,6 @@
+use crate::driver::EvolutionDriver;
 use crate::evolution::EvolutionEngine;
-use crate::genome::{CapabilityGenome, LlmExecutor};
+use crate::genome::CapabilityGenome;
 use crate::memory::{PersistentMemory, TemplateStep};
 use crate::meta_evolve::ExecutorRegistry;
 use crate::orchestrator::{CapabilityInfo, Orchestrator, StepOutput};
@@ -24,7 +25,7 @@ pub struct Agent {
     client: LlmClient,
     memory: PersistentMemory,
     evolution: Option<EvolutionEngine>,
-    llm_executor: Option<Arc<LlmExecutor>>,
+    llm_executor: Option<Arc<dyn EvolutionDriver>>,
     executor_registry: Option<Arc<ExecutorRegistry>>,
     platform: Platform,
     max_iterations: usize,
@@ -122,7 +123,7 @@ impl Agent {
     /// 创建新的 AI Agent
     pub fn new(orchestrator: Orchestrator, api_key: impl Into<String>) -> Self {
         let platform = Platform::detect();
-        let storage_dir = platform.storage_dir();
+        let storage_dir = format!("{}/.evolution", platform.storage_dir());
         Self {
             orchestrator: Arc::new(orchestrator),
             client: LlmClient::new(api_key),
@@ -156,10 +157,14 @@ impl Agent {
 
     /// 启用进化引擎
     pub fn with_evolution(mut self) -> Self {
-        let llm = Arc::new(LlmExecutor::new(
-            self.client.api_key.clone(),
-            self.client.base_url.clone(),
-        ));
+        let llm: Arc<dyn EvolutionDriver> = if std::env::var("ORCH_USE_OPENCODE").is_ok() {
+            Arc::new(crate::driver::OpenCodeCliDriver::new())
+        } else {
+            Arc::new(crate::genome::LlmExecutor::new(
+                self.client.api_key.clone(),
+                self.client.base_url.clone(),
+            ))
+        };
         let registry = Arc::new(ExecutorRegistry::new(&self.storage_dir));
         self.llm_executor = Some(llm.clone());
         self.executor_registry = Some(registry.clone());
@@ -279,7 +284,9 @@ impl Agent {
                                 cap_name,
                                 genome.action_names().join(", ")
                             );
-                            evo.register_genome(genome);
+                            if let Err(e) = evo.register_genome(genome) {
+                                tracing::warn!("register_genome 保存失败: {}", e);
+                            }
                             if let Some(llm) = &self.llm_executor {
                                 let bus = self.orchestrator.bus().clone();
                                 let mut cap = crate::genome::ScriptedCapability::from_genome(
@@ -474,7 +481,7 @@ impl Agent {
         // 保存进化引擎
         if let Some(evo) = &mut self.evolution {
             // 自然选择：淘汰适应度低于 0.3 的能力
-            let eliminated = evo.natural_selection(0.3);
+            let eliminated = evo.natural_selection(0.3).unwrap_or_default();
             if !eliminated.is_empty() {
                 println!("🗑️  自然选择: 淘汰 {} 个低适应度能力", eliminated.len());
             }
@@ -547,7 +554,7 @@ impl Agent {
     }
 
     /// 获取 LLM 执行器
-    pub fn llm_executor(&self) -> Option<&Arc<LlmExecutor>> {
+    pub fn llm_executor(&self) -> Option<&Arc<dyn EvolutionDriver>> {
         self.llm_executor.as_ref()
     }
 
@@ -618,6 +625,11 @@ impl Agent {
 - 一次可以返回多个步骤，它们会按顺序执行
 - 如果上一步失败，调整策略重试
 - 变量引用: 可以用 ${{step_name.field}} 引用之前步骤的输出
+- ⚠️ 路径约束（硬约束，不可绕过）：
+  - 所有文件写入操作（fs:write/mkdir/delete/move）的目标路径必须在项目根目录或 .ai-sandbox/ 内
+  - shell 命令的 cwd 必须在项目根目录内
+  - 尝试写入白名单外的路径会被运行时直接拒绝，返回错误
+  - 实验性文件请写入 .ai-sandbox/ 目录
 
 创造新能力（当现有能力不足时）：
 在返回中添加 "new_capability" 字段，格式为基因组。
@@ -724,7 +736,7 @@ Script 和 Composite 中可以用 {{{{var}}}} 引用输入参数，Composite 步
         let mut obs = String::new();
         for (k, v) in context {
             let v_str = if v.to_string().len() > 200 {
-                format!("{}...(截断)", &v.to_string()[..200])
+                format!("{}...(截断)", safe_truncate(&v.to_string(), 200))
             } else {
                 serde_json::to_string_pretty(v).unwrap_or_default()
             };
@@ -906,6 +918,18 @@ fn now_string() -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| format!("{}", d.as_secs()))
         .unwrap_or_default()
+}
+
+/// 安全截断：按字节上限截断，但回退到字符边界，避免多字节字符（如中文）panic
+fn safe_truncate(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    let mut end = max_bytes;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
 }
 
 #[cfg(test)]

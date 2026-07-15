@@ -4,8 +4,9 @@ use capabilities::{
 };
 use clap::{Parser, Subcommand};
 use runtime::{
-    discover_llm_backends, Agent, Daemon, DaemonConfig, LlmExecutor, McpServer, MessageBus,
-    OrchestratorBuilder, Platform, RegistryBuilder, Workflow,
+    discover_llm_backends, http_api, Agent, Daemon, DaemonConfig, EvolutionDriver, LlmConfig,
+    LlmExecutor, McpServer, MessageBus, OpenCodeCliDriver, OrchestratorBuilder, PathGuard,
+    Platform, ProjectWorker, RegistryBuilder, Sandbox, Workflow,
 };
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -22,6 +23,21 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    #[command(hide = true)]
+    CapabilityWorker,
+    #[command(hide = true)]
+    CapabilityWorkerSelfTest,
+    /// 在真实 Git 项目中提出或执行改进（默认只生成提案）
+    Project {
+        #[arg(long)]
+        path: PathBuf,
+        #[arg(short, long)]
+        task: String,
+        #[arg(long)]
+        verify: Option<String>,
+        #[arg(long, default_value_t = false)]
+        approve: bool,
+    },
     /// 运行工作流
     Run {
         /// 工作流 YAML 文件路径
@@ -179,8 +195,8 @@ enum Commands {
         #[arg(long, default_value_t = 300)]
         interval: u64,
 
-        /// 最大进化轮次
-        #[arg(long, default_value_t = 100)]
+        /// 最大进化轮次（0 = 无限运行，完全自主）
+        #[arg(long, default_value_t = 0)]
         max_rounds: u32,
     },
     /// Autonomous — 自主模式（单次感知→目标→执行）
@@ -204,42 +220,70 @@ enum Commands {
     Discover,
 }
 
-/// 获取 API key — devin 模式或未设置时返回空字符串
+/// 获取 API key
 ///
-/// - base_url == "devin": 通过 `devin -p` CLI 调用 LLM，不需要 api_key
-/// - MCP server: client-side 路径（get_*_context + register_genome）不需要 api_key
-/// - 其他情况: 需要 ANTHROPIC_API_KEY 或 CLAUDE_API_KEY 环境变量
-fn get_api_key(base_url: &str) -> String {
-    if base_url == "devin" || base_url == "claude" {
-        return String::new();
-    }
-    // 优先使用通用 ORCH_API_KEY
+/// 优先使用 ORCH_API_KEY，回退到 ANTHROPIC_API_KEY/CLAUDE_API_KEY
+fn get_api_key(_base_url: &str) -> String {
     if let Ok(key) = std::env::var("ORCH_API_KEY") {
         return key;
     }
     match std::env::var("ANTHROPIC_API_KEY").or_else(|_| std::env::var("CLAUDE_API_KEY")) {
         Ok(key) => key,
         Err(_) => {
-            tracing::warn!(
-                "未设置 ORCH_API_KEY/ANTHROPIC_API_KEY/CLAUDE_API_KEY — server-side LLM 工具将不可用，\
-                 请使用 client-side 路径或设置 --base-url devin"
-            );
+            tracing::warn!("未设置 ORCH_API_KEY — LLM 工具将不可用，请设置 ORCH_API_KEY 环境变量");
             String::new()
         }
     }
 }
 
 fn build_registry() -> MessageBus {
+    // 构建 PathGuard：限制 AI agent 的文件操作范围
+    // 允许在项目根目录和 .ai-sandbox 内操作
+    let allowed_paths = build_allowed_paths();
+    let path_guard = if allowed_paths.is_empty() {
+        PathGuard::unrestricted()
+    } else {
+        PathGuard::new(&allowed_paths)
+    };
+
     RegistryBuilder::new()
         .with(GreetCapability)
         .with(ComputeCapability)
         .with(StoreCapability::new())
-        .with(FsCapability)
-        .with(ShellCapability)
+        .with(FsCapability::with_path_guard(path_guard.clone()))
+        .with(ShellCapability::with_path_guard(path_guard))
         .with(HttpCapability::new())
         .with(CodeCapability)
         .with(WebCapability::new())
         .build()
+}
+
+/// 构建 AI agent 允许操作的路径白名单
+/// 默认允许：项目根目录 + .ai-sandbox
+/// 可通过 ORCH_ALLOWED_PATHS 环境变量追加（冒号分隔）
+fn build_allowed_paths() -> Vec<PathBuf> {
+    let mut paths = vec![];
+
+    // 项目根目录（Cargo.toml 所在目录）
+    if let Ok(root) = std::env::current_dir() {
+        paths.push(root);
+    }
+
+    // .ai-sandbox 目录
+    if let Ok(root) = std::env::current_dir() {
+        paths.push(root.join(".ai-sandbox"));
+    }
+
+    // 环境变量追加路径
+    if let Ok(extra) = std::env::var("ORCH_ALLOWED_PATHS") {
+        for p in extra.split(':') {
+            if !p.is_empty() {
+                paths.push(PathBuf::from(p));
+            }
+        }
+    }
+
+    paths
 }
 
 async fn register_genomes(agent: &Agent) {
@@ -276,6 +320,72 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
+        Commands::CapabilityWorker => {
+            runtime::run_capability_worker_stdio()
+                .await
+                .map_err(anyhow::Error::msg)?;
+        }
+        Commands::CapabilityWorkerSelfTest => {
+            let sandbox = Sandbox::with_defaults();
+            let result = sandbox
+                .execute_python(
+                    "import json\nprint(json.dumps({'success': True, 'worker': 'ok'}))",
+                    &serde_json::json!({"probe": true}),
+                )
+                .await;
+            let denied_path = std::env::var("HOME")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| PathBuf::from("/Users"))
+                .join(".orch-capability-sandbox-probe");
+            let denied_path_json = serde_json::to_string(&denied_path.to_string_lossy())?;
+            let denied_code = format!(
+                r#"import json
+from pathlib import Path
+try:
+    Path({}).write_text('blocked')
+    denied = False
+except PermissionError:
+    denied = True
+print(json.dumps({{'success': denied}}))"#,
+                denied_path_json
+            );
+            let write_probe = sandbox
+                .execute_python(&denied_code, &serde_json::json!({}))
+                .await;
+            let _ = std::fs::remove_file(&denied_path);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "execution": result,
+                    "unlisted_write_denied": write_probe,
+                }))?
+            );
+            let backend_ok =
+                !cfg!(target_os = "macos") || result.sandbox_backend == "macos_sandbox_exec";
+            if !result.success
+                || result.isolation != "worker_process"
+                || result.worker_pid.is_none()
+                || !backend_ok
+                || !write_probe.success
+            {
+                anyhow::bail!("Capability Worker 自检失败");
+            }
+        }
+        Commands::Project {
+            path,
+            task,
+            verify,
+            approve,
+        } => {
+            let storage =
+                std::path::PathBuf::from(Platform::detect().storage_dir()).join(".evolution");
+            let worker = ProjectWorker::new(storage);
+            let result = worker
+                .run(path, &task, verify.as_deref(), approve)
+                .await
+                .map_err(anyhow::Error::msg)?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        }
         Commands::Run { workflow, verbose } => {
             let wf = Workflow::from_file(
                 workflow
@@ -654,7 +764,11 @@ async fn main() -> anyhow::Result<()> {
             })?;
 
             // 构建 LLM 执行器（行为与 CLI 完全一致）
-            let llm = Arc::new(LlmExecutor::new(api_key, base_url));
+            let llm: Arc<dyn EvolutionDriver> = if std::env::var("ORCH_USE_OPENCODE").is_ok() {
+                Arc::new(OpenCodeCliDriver::new())
+            } else {
+                Arc::new(LlmExecutor::new(api_key, base_url))
+            };
 
             // 注册原生能力到总线（让 MCP 也能调用 greet/compute/fs/shell 等能力）
             let bus = Arc::new(build_registry());
@@ -699,18 +813,51 @@ async fn main() -> anyhow::Result<()> {
             println!("  coder (代码生成/变异):    {}", coder_model);
 
             let platform = Platform::detect();
-            let storage_dir = storage.unwrap_or_else(|| {
-                PathBuf::from(format!(
-                    "{}/.orch",
-                    std::env::var("HOME").unwrap_or_else(|_| "/tmp".into())
-                ))
-            });
+            let storage_dir = storage.unwrap_or_else(|| PathBuf::from(platform.storage_dir()));
             std::fs::create_dir_all(&storage_dir).map_err(|e| {
                 anyhow::anyhow!("创建存储目录失败: {}: {}", storage_dir.display(), e)
             })?;
 
             // 构建 LLM 执行器
-            let llm = Arc::new(LlmExecutor::new(api_key, base_url));
+            let llm_override: Option<Arc<std::sync::RwLock<Option<LlmConfig>>>>;
+            let llm: Arc<dyn EvolutionDriver> = if std::env::var("ORCH_USE_OPENCODE").is_ok() {
+                llm_override = None; // CLI driver 不支持热切换
+                Arc::new(OpenCodeCliDriver::new())
+            } else {
+                // 启动配置：优先加载 UI 持久化的配置，否则用环境变量
+                let init_cfg = match http_api::load_persisted_config(&storage_dir) {
+                    Some(saved) => {
+                        println!(
+                            "✅ 已加载 UI 持久化配置: model={}, base_url={}",
+                            saved.fast_model, saved.base_url
+                        );
+                        saved
+                    }
+                    None => LlmConfig {
+                        api_key: api_key.clone(),
+                        base_url: base_url.clone(),
+                        fast_model: std::env::var("ORCH_MODEL_FAST")
+                            .or_else(|_| std::env::var("ORCH_MODEL"))
+                            .unwrap_or_else(|_| model.clone()),
+                        smart_model: std::env::var("ORCH_MODEL_SMART")
+                            .unwrap_or_else(|_| model.clone()),
+                        coder_model: std::env::var("ORCH_MODEL_CODER")
+                            .unwrap_or_else(|_| model.clone()),
+                        fast_config: None,
+                        smart_config: None,
+                        coder_config: None,
+                        fallback_configs: Vec::new(),
+                        active_hours: None,
+                    },
+                };
+                let exec = Arc::new(LlmExecutor::new(
+                    init_cfg.api_key.clone(),
+                    init_cfg.base_url.clone(),
+                ));
+                let _ = exec.set_config(init_cfg);
+                llm_override = Some(exec.override_handle());
+                exec
+            };
 
             // 构建进化引擎（加载已有 genomes.json）
             let evo_storage = storage_dir.join(".evolution");
@@ -746,6 +893,10 @@ async fn main() -> anyhow::Result<()> {
                 storage_dir: storage_dir.clone(),
                 evolution_interval_secs: interval,
                 max_rounds,
+                http_port: std::env::var("ORCH_HTTP_PORT")
+                    .ok()
+                    .and_then(|p| p.parse().ok())
+                    .unwrap_or(7331),
             };
 
             // 自动发现 LLM 后端
@@ -771,10 +922,21 @@ async fn main() -> anyhow::Result<()> {
             println!("   socket: {}", config.socket_path.display());
             println!("   bin:    {}", config.bin_dir.display());
             println!("   能力:   {} 个已注册", evolution.genomes().len());
-            println!("   进化间隔: {}s, 最大轮次: {}", interval, max_rounds);
+            println!(
+                "   进化间隔: {}s, 最大轮次: {}",
+                interval,
+                if max_rounds == 0 {
+                    "∞ (无限自主)".to_string()
+                } else {
+                    max_rounds.to_string()
+                }
+            );
             println!("\n   按 Ctrl+C 停止\n");
 
             let mut daemon = Daemon::new(config, bus, evolution, Some(llm), platform);
+            if let Some(handle) = llm_override {
+                daemon = daemon.with_llm_override(handle);
+            }
             daemon
                 .run()
                 .await
@@ -788,12 +950,7 @@ async fn main() -> anyhow::Result<()> {
         } => {
             let api_key = get_api_key(&base_url);
             let platform = Platform::detect();
-            let storage_dir = storage.unwrap_or_else(|| {
-                PathBuf::from(format!(
-                    "{}/.orch",
-                    std::env::var("HOME").unwrap_or_else(|_| "/tmp".into())
-                ))
-            });
+            let storage_dir = storage.unwrap_or_else(|| PathBuf::from(platform.storage_dir()));
 
             // 设置默认模型供运行时内部使用（LlmExecutor execute_openai 会读取 ORCH_MODEL）
             std::env::set_var("ORCH_MODEL", &model);
@@ -823,7 +980,11 @@ async fn main() -> anyhow::Result<()> {
 
             let mut evolution = runtime::EvolutionEngine::new(evo_storage);
 
-            let llm = Arc::new(LlmExecutor::new(api_key, base_url));
+            let llm: Arc<dyn EvolutionDriver> = if std::env::var("ORCH_USE_OPENCODE").is_ok() {
+                Arc::new(OpenCodeCliDriver::new())
+            } else {
+                Arc::new(LlmExecutor::new(api_key, base_url))
+            };
             let bus = Arc::new(build_registry());
 
             // 注册已有能力
@@ -860,7 +1021,9 @@ async fn main() -> anyhow::Result<()> {
             // 2. 生成目标
             let caps: Vec<String> = evolution.genomes().keys().cloned().collect();
             println!("\n🎯 生成目标 (可用能力 {} 个)...", caps.len());
-            let goals = auto.generate_goals(&report, &caps).await;
+            let (goals, _llm_response) = auto
+                .generate_goals(&report, &evolution, Some(evolution.memory()))
+                .await;
 
             if goals.is_empty() {
                 println!("   未生成目标，环境正常或无匹配能力。");

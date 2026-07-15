@@ -7,8 +7,9 @@
 //! - server 内部用 LlmExecutor 调 LLM，行为与 CLI 完全一致
 
 use crate::auto_evolve::{AutoEvolver, IntrospectionReport, MutationPlan, WeakCapability};
+use crate::driver::EvolutionDriver;
 use crate::evolution::EvolutionEngine;
-use crate::genome::{CapabilityGenome, LlmExecutor, ScriptedCapability};
+use crate::genome::{CapabilityGenome, ScriptedCapability};
 use crate::message_bus::MessageBus;
 use crate::meta_evolve::ExecutorRegistry;
 use crate::platform::Platform;
@@ -32,7 +33,7 @@ struct McpEvolutionState {
     auto_evolver: Mutex<AutoEvolver>,
     evolution: Mutex<EvolutionEngine>,
     bus: Arc<MessageBus>,
-    llm: Arc<LlmExecutor>,
+    llm: Arc<dyn EvolutionDriver>,
     executor_registry: Arc<ExecutorRegistry>,
     /// 异步任务注册表（evolve_continuous 后台运行）
     tasks: Mutex<HashMap<String, TaskStatus>>,
@@ -53,7 +54,7 @@ impl McpServer {
     /// 与 CLI 共享同一份 genomes.json（通过 storage_dir 指定）。
     /// 调用方需要先注册原生能力到 bus，再调用此函数。
     pub fn new(
-        llm: Arc<LlmExecutor>,
+        llm: Arc<dyn EvolutionDriver>,
         bus: Arc<MessageBus>,
         platform: Platform,
         storage_dir: std::path::PathBuf,
@@ -418,7 +419,9 @@ impl McpServer {
             eliminated.push(name.clone());
             evolution.genomes_mut().remove(name);
         }
-        evolution.save();
+        if let Err(e) = evolution.save() {
+            tracing::warn!("evolution save 失败: {}", e);
+        }
 
         Ok(serde_json::json!({ "eliminated": eliminated }))
     }
@@ -827,7 +830,9 @@ impl McpServer {
 
         let name = genome.name.clone();
         let mut evolution = self.state.evolution.lock().await;
-        evolution.register_genome(genome);
+        if let Err(e) = evolution.register_genome(genome) {
+            return Err(format!("register_genome 保存失败: {}", e));
+        }
         drop(evolution);
 
         // 注册到总线（与 fill_gap 等一致）

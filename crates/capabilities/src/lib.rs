@@ -1,3 +1,4 @@
+pub mod cmake_ops;
 pub mod code;
 pub mod compute;
 pub mod fs;
@@ -7,6 +8,7 @@ pub mod shell;
 pub mod store;
 pub mod web;
 
+pub use cmake_ops::CMakeOpsCapability;
 pub use code::CodeCapability;
 pub use compute::ComputeCapability;
 pub use fs::FsCapability;

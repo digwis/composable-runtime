@@ -3,3 +3,18 @@ Cargo.lock
 *.swp
 *.swo
 .DS_Store
+
+# AI Sandbox - experimental workspace, not tracked in git
+.ai-sandbox/
+
+# Dashboard dependencies and generated bundles
+Evolution-Dashboard/node_modules/
+Evolution-Dashboard/out/
+
+# Local downloads and task artifacts
+*.zip
+*.tar.gz
+*.torrent
+Evolution-Dashboard/gnu-wget-mirror
+Evolution-Dashboard/gnu_wget_mirror
+Evolution-Dashboard/test

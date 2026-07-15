@@ -1,5 +1,6 @@
 use crate::ab_test::{ABTestRecommendation, ABTestResult, ABTester};
-use crate::genome::{ActionImpl, CapabilityGenome, LlmExecutor};
+use crate::driver::EvolutionDriver;
+use crate::genome::{ActionImpl, CapabilityGenome};
 use crate::sandbox::Sandbox;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -34,14 +35,14 @@ pub struct CapabilityGap {
 /// 5. A/B 测试（如果已有类似能力）
 /// 6. 通过则注册
 pub struct FailureDriver {
-    llm: Arc<LlmExecutor>,
+    llm: Arc<dyn EvolutionDriver>,
     sandbox: Sandbox,
     ab_tester: ABTester,
     failures: Vec<FailureEvent>,
 }
 
 impl FailureDriver {
-    pub fn new(llm: Arc<LlmExecutor>) -> Self {
+    pub fn new(llm: Arc<dyn EvolutionDriver>) -> Self {
         let sandbox = Sandbox::with_defaults();
         let ab_tester = ABTester::new(Sandbox::with_defaults());
         Self {
@@ -52,7 +53,7 @@ impl FailureDriver {
         }
     }
 
-    pub fn with_sandbox(llm: Arc<LlmExecutor>, sandbox: Sandbox) -> Self {
+    pub fn with_sandbox(llm: Arc<dyn EvolutionDriver>, sandbox: Sandbox) -> Self {
         let ab_tester = ABTester::new(sandbox.clone());
         Self {
             llm,
@@ -436,8 +437,11 @@ impl EvolutionOutcome {
 mod tests {
     use super::*;
 
-    fn make_llm() -> Arc<LlmExecutor> {
-        Arc::new(LlmExecutor::new("dummy_key", "http://localhost"))
+    fn make_llm() -> Arc<dyn EvolutionDriver> {
+        Arc::new(crate::genome::LlmExecutor::new(
+            "dummy_key",
+            "http://localhost",
+        ))
     }
 
     fn make_failure(task: &str, cap: &str, error: &str) -> FailureEvent {

@@ -1,7 +1,9 @@
+use crate::driver::EvolutionDriver;
 use crate::evolution::EvolutionEngine;
-use crate::genome::{ActionImpl, LlmExecutor};
+use crate::genome::ActionImpl;
 use crate::message_bus::MessageBus;
 use crate::platform::Platform;
+use crate::sandbox::{Sandbox, SandboxConfig};
 use libloading::Library;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -120,6 +122,27 @@ fn default_executor_timeout() -> u64 {
     60
 }
 
+/// 校验 type_name：仅允许 [A-Za-z0-9_-]，长度 1–64，拒绝路径穿越。
+fn validate_type_name(type_name: &str) -> Result<(), String> {
+    if type_name.is_empty() {
+        return Err("type_name 不能为空".into());
+    }
+    if type_name.len() > 64 {
+        return Err(format!("type_name 长度超过 64: '{}'", type_name));
+    }
+    // 拒绝任何非 [A-Za-z0-9_-] 字符（包含 / .. \ 空格等）
+    if !type_name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
+        return Err(format!(
+            "type_name 含非法字符（仅允许 [A-Za-z0-9_-]）: '{}'",
+            type_name
+        ));
+    }
+    Ok(())
+}
+
 impl RuntimeSpec {
     /// 创建初始运行时规范（仅包含内置执行器）
     pub fn initial() -> Self {
@@ -139,7 +162,8 @@ impl RuntimeSpec {
     }
 
     /// 注册自定义执行器
-    pub fn register_executor(&mut self, spec: CustomExecutorSpec) {
+    pub fn register_executor(&mut self, spec: CustomExecutorSpec) -> Result<(), String> {
+        validate_type_name(&spec.type_name)?;
         let name = spec.type_name.clone();
         // 替换同名执行器
         self.custom_executors.retain(|e| e.type_name != name);
@@ -150,6 +174,7 @@ impl RuntimeSpec {
             description: "注册自定义执行器".into(),
             timestamp: now_string(),
         });
+        Ok(())
     }
 
     /// 获取自定义执行器规范
@@ -208,15 +233,16 @@ impl ExecutorRegistry {
     }
 
     /// 注册自定义执行器
-    pub async fn register(&self, spec: CustomExecutorSpec) {
+    pub async fn register(&self, spec: CustomExecutorSpec) -> Result<(), String> {
         let name = spec.type_name.clone();
         {
             let mut s = self.spec.write().await;
-            s.register_executor(spec);
+            s.register_executor(spec)?;
             s.meta_stats.executors_created += 1;
         }
-        self.save().await;
+        self.save().await?;
         tracing::info!("注册自定义执行器: {}", name);
+        Ok(())
     }
 
     /// 变异自定义执行器
@@ -225,6 +251,27 @@ impl ExecutorRegistry {
         type_name: &str,
         new_code: String,
         new_description: Option<String>,
+    ) -> Result<(), String> {
+        self.mutate_executor_inner(type_name, new_code, new_description, false)
+            .await
+    }
+
+    async fn mutate_executor_from_meta(
+        &self,
+        type_name: &str,
+        new_code: String,
+        new_description: Option<String>,
+    ) -> Result<(), String> {
+        self.mutate_executor_inner(type_name, new_code, new_description, true)
+            .await
+    }
+
+    async fn mutate_executor_inner(
+        &self,
+        type_name: &str,
+        new_code: String,
+        new_description: Option<String>,
+        autonomous: bool,
     ) -> Result<(), String> {
         let mut s = self.spec.write().await;
         let executor = s
@@ -237,8 +284,10 @@ impl ExecutorRegistry {
         if let Some(desc) = new_description {
             executor.description = desc;
         }
-        executor.lineage.generation += 1;
-        executor.lineage.origin = ExecutorOrigin::MetaMutated;
+        executor.lineage.generation = executor.lineage.generation.saturating_add(1);
+        if autonomous {
+            executor.lineage.origin = ExecutorOrigin::MetaMutated;
+        }
         let generation = executor.lineage.generation;
 
         s.meta_stats.executors_mutated += 1;
@@ -249,7 +298,7 @@ impl ExecutorRegistry {
             timestamp: now_string(),
         });
         drop(s);
-        self.save().await;
+        self.save().await?;
         Ok(())
     }
 
@@ -269,7 +318,7 @@ impl ExecutorRegistry {
             timestamp: now_string(),
         });
         drop(s);
-        self.save().await;
+        self.save().await?;
         Ok(())
     }
 
@@ -313,15 +362,70 @@ impl ExecutorRegistry {
         input: &serde_json::Value,
         context: &ExecutorContext,
     ) -> Result<serde_json::Value, String> {
-        let spec = self.spec.read().await;
-        let executor = spec
-            .get_executor(type_name)
-            .ok_or_else(|| format!("自定义执行器 '{}' 不存在", type_name))?;
+        let executor = {
+            let spec = self.spec.read().await;
+            spec.get_executor(type_name)
+                .cloned()
+                .ok_or_else(|| format!("自定义执行器 '{}' 不存在", type_name))?
+        };
+
+        self.execute_spec(&executor, params, input, context, false)
+            .await
+    }
+
+    /// 在候选态测试执行器规范。
+    ///
+    /// 候选执行器不会写入正式 RuntimeSpec、元进化历史或统计。
+    /// 独立的临时执行环境也避免 WASM/原生插件缓存替换同名的正式执行器。
+    async fn execute_candidate(
+        &self,
+        candidate: &CustomExecutorSpec,
+        params: &serde_json::Value,
+        input: &serde_json::Value,
+        context: &ExecutorContext,
+    ) -> Result<serde_json::Value, String> {
+        if !matches!(candidate.language.as_str(), "rust" | "wasm") {
+            return Err(format!(
+                "自动生成的候选执行器仅允许 rust/wasm 沙箱，拒绝全权限语言 '{}'",
+                candidate.language
+            ));
+        }
+
+        let candidate_dir = std::env::temp_dir().join(format!(
+            "composable_runtime_executor_candidate_{}",
+            uuid::Uuid::new_v4()
+        ));
+        let candidate_registry = Self {
+            spec: RwLock::new(RuntimeSpec::initial()),
+            storage_path: candidate_dir.join("runtime_spec.json"),
+            native_plugins: Mutex::new(HashMap::new()),
+        };
+
+        let result = candidate_registry
+            .execute_spec(candidate, params, input, context, true)
+            .await;
+
+        // 原生插件可能持有动态库句柄，先释放再清理候选缓存。
+        drop(candidate_registry);
+        let _ = tokio::fs::remove_dir_all(&candidate_dir).await;
+
+        result
+    }
+
+    /// 执行已解析的执行器规范，不读写注册表。
+    async fn execute_spec(
+        &self,
+        executor: &CustomExecutorSpec,
+        params: &serde_json::Value,
+        input: &serde_json::Value,
+        context: &ExecutorContext,
+        strict_output: bool,
+    ) -> Result<serde_json::Value, String> {
+        let type_name = executor.type_name.as_str();
 
         let executor_code = executor.executor_code.clone();
         let language = executor.language.clone();
         let timeout_secs = executor.timeout_secs;
-        drop(spec);
 
         // 构造执行器输入
         let executor_input = serde_json::json!({
@@ -346,6 +450,7 @@ impl ExecutorRegistry {
                     &input_str,
                     timeout_secs,
                     true,
+                    strict_output,
                 )
                 .await
             }
@@ -358,12 +463,19 @@ impl ExecutorRegistry {
                     &input_str,
                     timeout_secs,
                     false,
+                    strict_output,
                 )
                 .await
             }
             "rust" | "wasm" => {
-                self.execute_wasm(type_name, &executor_code, &input_str, timeout_secs)
-                    .await
+                self.execute_wasm(
+                    type_name,
+                    &executor_code,
+                    &input_str,
+                    timeout_secs,
+                    strict_output,
+                )
+                .await
             }
             "rust_native" | "native" => {
                 self.execute_native(type_name, &executor_code, &input_str, timeout_secs)
@@ -379,47 +491,74 @@ impl ExecutorRegistry {
         &self,
         type_name: &str,
         runner: &str,
-        ext: &str,
+        _ext: &str,
         code: &str,
         input_str: &str,
         timeout_secs: u64,
         is_python: bool,
+        strict_output: bool,
     ) -> Result<serde_json::Value, String> {
         let rendered_code = if is_python {
             render_python_code(code, input_str)
         } else {
             render_node_code(code, input_str)
         };
+        let language = if is_python { "python" } else { "node" };
+        let mut config = SandboxConfig::default();
+        config.timeout = std::time::Duration::from_secs(timeout_secs.max(1));
+        let input = serde_json::from_str(input_str).unwrap_or(serde_json::Value::Null);
+        let mut env = HashMap::new();
+        env.insert("ORCH_EXECUTOR_TYPE".into(), type_name.to_string());
+        env.insert("ORCH_EXECUTOR_RUNNER".into(), runner.to_string());
+        let result = Sandbox::new(config)
+            .execute_script(language, &rendered_code, &input, env)
+            .await;
+        if !result.success {
+            if result.timed_out {
+                return Err(format!("执行器执行超时 ({}s)", timeout_secs));
+            }
+            return Err(format!(
+                "执行器 {} 执行失败 (exit {:?}): {}",
+                type_name, result.exit_code, result.stderr
+            ));
+        }
+        Self::parse_script_output(type_name, &result.stdout, &result.stderr, strict_output)
+    }
 
-        let tmp = std::env::temp_dir().join(format!(
-            "executor_{}_{}.{}",
-            type_name,
-            uuid::Uuid::new_v4(),
-            ext
-        ));
-
-        tokio::fs::write(&tmp, &rendered_code)
-            .await
-            .map_err(|e| format!("写入执行器文件失败: {}", e))?;
-
-        let mut cmd = tokio::process::Command::new(runner);
-        cmd.arg(&tmp);
-        cmd.stdout(std::process::Stdio::piped());
-        cmd.stderr(std::process::Stdio::piped());
-
-        let child = cmd
-            .spawn()
-            .map_err(|e| format!("启动执行器 {} 失败: {}", runner, e))?;
-
-        let output = tokio::time::timeout(
-            std::time::Duration::from_secs(timeout_secs),
-            child.wait_with_output(),
-        )
-        .await;
-
-        let _ = tokio::fs::remove_file(&tmp).await;
-
-        Self::process_output(output, type_name, timeout_secs)
+    fn parse_script_output(
+        type_name: &str,
+        stdout: &str,
+        stderr: &str,
+        strict_output: bool,
+    ) -> Result<serde_json::Value, String> {
+        let trimmed = stdout.trim();
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) {
+            if value.is_object() {
+                return Ok(value);
+            }
+        }
+        if strict_output {
+            return Err(format!(
+                "候选执行器 {} 必须只输出包含 success 的 JSON 对象，实际输出: {}",
+                type_name,
+                safe_truncate(trimmed, 300)
+            ));
+        }
+        for line in trimmed.lines() {
+            let line = line.trim();
+            if line.starts_with('{') {
+                if let Ok(value) = serde_json::from_str::<serde_json::Value>(line) {
+                    if value.is_object() {
+                        return Ok(value);
+                    }
+                }
+            }
+        }
+        Ok(serde_json::json!({
+            "success": true,
+            "result": stdout,
+            "stderr": stderr,
+        }))
     }
 
     /// 执行 Rust 代码：编译为 WASM → wasmtime 沙箱执行
@@ -432,6 +571,7 @@ impl ExecutorRegistry {
         code: &str,
         input_str: &str,
         timeout_secs: u64,
+        strict_output: bool,
     ) -> Result<serde_json::Value, String> {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
@@ -479,6 +619,7 @@ impl ExecutorRegistry {
                     ])
                     .stdout(std::process::Stdio::piped())
                     .stderr(std::process::Stdio::piped())
+                    .kill_on_drop(true)
                     .output(),
             )
             .await;
@@ -508,6 +649,7 @@ impl ExecutorRegistry {
         cmd.stdin(std::process::Stdio::piped());
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
+        cmd.kill_on_drop(true);
 
         let mut child = cmd
             .spawn()
@@ -526,7 +668,7 @@ impl ExecutorRegistry {
         )
         .await;
 
-        Self::process_output(output, type_name, timeout_secs)
+        Self::process_output(output, type_name, timeout_secs, strict_output)
     }
 
     /// 处理子进程输出，解析为 JSON
@@ -534,6 +676,7 @@ impl ExecutorRegistry {
         output: Result<Result<std::process::Output, std::io::Error>, tokio::time::error::Elapsed>,
         type_name: &str,
         timeout_secs: u64,
+        strict_output: bool,
     ) -> Result<serde_json::Value, String> {
         match output {
             Ok(Ok(out)) => {
@@ -556,6 +699,13 @@ impl ExecutorRegistry {
                         return Ok(v);
                     }
                 }
+                if strict_output {
+                    return Err(format!(
+                        "候选执行器 '{}' 必须只输出包含 success 的 JSON 对象，实际输出: {}",
+                        type_name,
+                        safe_truncate(trimmed, 300)
+                    ));
+                }
                 // 多行输出：取第一个有效 JSON 行
                 for line in trimmed.lines() {
                     let line = line.trim();
@@ -567,7 +717,7 @@ impl ExecutorRegistry {
                         }
                     }
                 }
-                // 无法解析为 JSON，返回原始输出
+                // 已注册的兼容执行器保留宽松模式：无法解析时返回原始输出
                 Ok(serde_json::json!({
                     "success": true,
                     "result": stdout,
@@ -658,6 +808,7 @@ impl ExecutorRegistry {
                     ])
                     .stdout(std::process::Stdio::piped())
                     .stderr(std::process::Stdio::piped())
+                    .kill_on_drop(true)
                     .output(),
             )
             .await;
@@ -713,27 +864,73 @@ impl ExecutorRegistry {
     }
 
     /// 保存到磁盘
-    async fn save(&self) {
+    async fn save(&self) -> Result<(), String> {
+        use std::io::Write;
+
         let s = self.spec.read().await;
         let json = s.to_json();
-        let tmp = self.storage_path.with_extension("tmp");
-        if std::fs::write(&tmp, &json).is_ok() {
-            let _ = std::fs::rename(&tmp, &self.storage_path);
+        drop(s);
+        if let Some(parent) = self.storage_path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("创建执行器存储目录失败: {}", e))?;
         }
+        let tmp = self
+            .storage_path
+            .with_extension(format!("tmp-{}", uuid::Uuid::new_v4()));
+        let result = (|| -> Result<(), String> {
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&tmp)
+                .map_err(|e| format!("创建执行器临时文件失败: {}", e))?;
+            file.write_all(json.as_bytes())
+                .map_err(|e| format!("写入执行器临时文件失败: {}", e))?;
+            file.sync_all()
+                .map_err(|e| format!("同步执行器临时文件失败: {}", e))?;
+            std::fs::rename(&tmp, &self.storage_path)
+                .map_err(|e| format!("原子替换执行器规范失败: {}", e))
+        })();
+        if result.is_err() {
+            let _ = std::fs::remove_file(&tmp);
+        }
+        result
     }
 
     /// 从磁盘加载
     fn load(&mut self) {
         if let Ok(content) = std::fs::read_to_string(&self.storage_path) {
-            if let Ok(spec) = RuntimeSpec::from_json(&content) {
+            if let Ok(mut spec) = RuntimeSpec::from_json(&content) {
+                let quarantined: Vec<String> = spec
+                    .custom_executors
+                    .iter()
+                    .filter(|executor| {
+                        matches!(
+                            &executor.lineage.origin,
+                            ExecutorOrigin::MetaGenerated | ExecutorOrigin::MetaMutated
+                        ) && !matches!(executor.language.as_str(), "rust" | "wasm")
+                    })
+                    .map(|executor| executor.type_name.clone())
+                    .collect();
+                if !quarantined.is_empty() {
+                    tracing::warn!(
+                        "隔离旧版全权限元进化执行器（需人工重新注册）: {}",
+                        quarantined.join(", ")
+                    );
+                    spec.custom_executors.retain(|executor| {
+                        !quarantined.iter().any(|name| name == &executor.type_name)
+                    });
+                }
                 tracing::info!(
                     "从磁盘加载运行时规范: {} 个自定义执行器, {} 个元进化事件",
                     spec.custom_executors.len(),
                     spec.meta_history.len()
                 );
-                // 直接用 blocking_write，避免在 tokio runtime 内嵌套 block_on
-                let mut s = self.spec.blocking_write();
-                *s = spec;
+                // 使用 try_write 避免在 tokio runtime 中 blocking_write 导致 panic
+                if let Ok(mut s) = self.spec.try_write() {
+                    *s = spec;
+                } else {
+                    tracing::warn!("运行时规范加载: spec 锁竞争，跳过本次加载");
+                }
             }
         }
     }
@@ -807,15 +1004,9 @@ fn main() {
     // 用户代码在此执行
     // __input 变量包含完整的输入 JSON 字符串
     let __input: &str = &input;
-    let mut __output_done: bool = false;
 
-    // 用户代码中应通过 println! 输出 JSON 到 stdout
+    // 用户代码必须通过 println! 输出 JSON 到 stdout；运行时不伪造默认成功。
 {user_code}
-
-    // 如果用户代码没有输出，输出默认成功响应
-    if !__output_done {
-        println!(\"{{\\\"success\\\": true}}\");
-    }
 }
 ";
     template.replace("{user_code}", user_code)
@@ -944,7 +1135,7 @@ pub extern \"C\" fn free_string(ptr: *mut c_char) {
 /// MetaEvolver = 进化进化本身（变异遗传密码）
 pub struct MetaEvolver {
     /// LLM 执行器
-    llm: Arc<LlmExecutor>,
+    llm: Arc<dyn EvolutionDriver>,
     /// 消息总线
     #[allow(dead_code)]
     bus: Arc<MessageBus>,
@@ -956,7 +1147,7 @@ pub struct MetaEvolver {
 
 impl MetaEvolver {
     pub fn new(
-        llm: Arc<LlmExecutor>,
+        llm: Arc<dyn EvolutionDriver>,
         bus: Arc<MessageBus>,
         platform: Platform,
         registry: Arc<ExecutorRegistry>,
@@ -990,7 +1181,7 @@ impl MetaEvolver {
 
         if report.bottleneck_description.is_empty() {
             println!("  🔬 元自省: 未发现执行模式瓶颈");
-            self.registry.save().await;
+            self.registry.save().await?;
             return Ok(actions);
         }
 
@@ -1021,7 +1212,7 @@ impl MetaEvolver {
             // 测试执行器
             let test_result = self.test_executor(&spec).await;
             if test_result {
-                self.registry.register(spec).await;
+                self.registry.register(spec).await?;
                 actions.push(format!(
                     "元创造: 执行器 '{}' (测试通过)",
                     proposal.type_name
@@ -1052,18 +1243,35 @@ impl MetaEvolver {
             // 简单策略：每 5 轮检查一次
             // 实际实现中可以用更智能的策略
             if self.should_mutate_executor(type_name, evolution).await {
-                if let Some(new_code) = self.generate_executor_mutation(type_name).await {
-                    match self
-                        .registry
-                        .mutate_executor(type_name, new_code.0, Some(new_code.1))
-                        .await
-                    {
-                        Ok(_) => {
-                            actions.push(format!("元变异: 执行器 '{}'", type_name));
-                            println!("  🧬 元变异: 执行器 '{}' 已优化", type_name);
-                        }
-                        Err(e) => {
-                            println!("  ❌ 元变异失败: {}", e);
+                if let Some((new_code, new_description)) =
+                    self.generate_executor_mutation(type_name).await
+                {
+                    if let Some(mut candidate) = self.registry.get_executor(type_name).await {
+                        candidate.executor_code = new_code.clone();
+                        candidate.description = new_description.clone();
+                        candidate.lineage.origin = ExecutorOrigin::MetaMutated;
+                        candidate.lineage.generation =
+                            candidate.lineage.generation.saturating_add(1);
+
+                        if self.test_executor(&candidate).await {
+                            match self
+                                .registry
+                                .mutate_executor_from_meta(
+                                    type_name,
+                                    new_code,
+                                    Some(new_description),
+                                )
+                                .await
+                            {
+                                Ok(_) => {
+                                    actions.push(format!("元变异: 执行器 '{}'", type_name));
+                                    println!("  🧬 元变异: 执行器 '{}' 已优化", type_name);
+                                }
+                                Err(e) => println!("  ❌ 元变异失败: {}", e),
+                            }
+                        } else {
+                            actions.push(format!("元变异: 执行器 '{}' (候选验证失败)", type_name));
+                            println!("  ❌ 元变异候选未通过，保留现有执行器: {}", type_name);
                         }
                     }
                 }
@@ -1082,7 +1290,7 @@ impl MetaEvolver {
             }
         }
 
-        self.registry.save().await;
+        self.registry.save().await?;
         Ok(actions)
     }
 
@@ -1104,6 +1312,7 @@ impl MetaEvolver {
                     ActionImpl::Composite { .. } => "Composite",
                     ActionImpl::Native { .. } => "Native",
                     ActionImpl::Script { .. } => "Script",
+                    ActionImpl::Shell { .. } => "Shell",
                     ActionImpl::Custom { executor_type, .. } => {
                         type_counts
                             .entry(format!("Custom:{}", executor_type))
@@ -1145,20 +1354,13 @@ impl MetaEvolver {
 3. 是否有 Script 能力反复启动 Python 进程，性能瓶颈明显？（需要缓存执行器）
 4. 是否有能力的逻辑无法用现有 5 种类型优雅表达？
 
-如果发现瓶颈，给出一个新执行器提案。执行器支持三种语言：
+如果发现瓶颈，给出一个新执行器提案。自主生成的候选只允许一种语言：
 
-- language: "python" — Python 脚本，接收 __EXECUTOR_INPUT__ 变量（含 params/input/context），输出 JSON 到 stdout
-  适合快速原型、数据处理、需要丰富库（numpy/requests 等）
-
-- language: "rust" — Rust 代码，通过 __input 变量（&str）获取输入 JSON，用 println! 输出 JSON 到 stdout
+- language: "rust" — Rust 代码，通过 __input 变量（&str）获取输入 JSON，用 println! 输出包含 success 布尔字段的 JSON 对象
   编译为 WASM 在沙箱中执行（编译结果缓存），安全隔离，只能使用标准库
   适合性能敏感的纯计算场景
 
-- language: "rust_native" — Rust 代码，通过 __input 变量（&str）获取输入 JSON，将输出 JSON 字符串赋值给 __output 变量
-  编译为原生动态库（.dylib/.so）通过 libloading 热加载执行，性能与原生代码完全一致
-  可以使用外部 crate（通过 cargo 编译），可以访问文件系统、网络等全部系统能力
-  适合需要完整系统能力、最高性能、或需要调用其他 Rust 库的场景
-  这是最高级别的进化：系统可以生成真正的原生代码并热加载
+Python/Node/native 拥有宿主文件、网络或进程权限，自动候选禁止使用；它们只能由人类审查后作为可信执行器手工注册。
 
 返回严格 JSON:
 {{
@@ -1168,7 +1370,7 @@ impl MetaEvolver {
     "type_name": "执行器类型名（如 cached_script, pipeline, conditional）",
     "description": "执行器描述",
     "params_schema": {{"properties": {{}}}},
-    "language": "python, rust, 或 rust_native",
+    "language": "rust",
     "executor_code": "执行器代码",
     "timeout_secs": 60
   }}
@@ -1276,13 +1478,23 @@ impl MetaEvolver {
 
         match self
             .registry
-            .execute(&spec.type_name, &test_params, &test_input, &context)
+            .execute_candidate(spec, &test_params, &test_input, &context)
             .await
         {
-            Ok(result) => result
-                .get("success")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(true),
+            Ok(result) => match result.get("success").and_then(|v| v.as_bool()) {
+                Some(true) => true,
+                Some(false) => {
+                    tracing::warn!("执行器 '{}' 候选测试返回 success=false", spec.type_name);
+                    false
+                }
+                None => {
+                    tracing::warn!(
+                        "执行器 '{}' 候选测试缺少布尔型 success 字段",
+                        spec.type_name
+                    );
+                    false
+                }
+            },
             Err(e) => {
                 tracing::warn!("执行器 '{}' 测试失败: {}", spec.type_name, e);
                 false
@@ -1315,23 +1527,35 @@ impl MetaEvolver {
     async fn generate_executor_mutation(&self, type_name: &str) -> Option<(String, String)> {
         let spec = self.registry.get_executor(type_name).await?;
 
+        // 根据执行器实际语言选择代码块标记和语言名称
+        let (lang_tag, lang_name) = match spec.language.as_str() {
+            "rust" | "wasm" => ("rust", "Rust"),
+            "python" | "py" => ("python", "Python"),
+            "node" | "javascript" | "js" => ("javascript", "JavaScript"),
+            "native" => ("rust", "Rust（原生插件）"),
+            other => (other, other),
+        };
+
         let prompt = format!(
             r#"你是一个执行器变异器。以下执行器可能需要优化。
 
 执行器名: {name}
 描述: {desc}
+语言: {lang_name}
 当前代码:
-```python
+```{lang_tag}
 {code}
 ```
 
 请分析代码并给出优化版本。返回严格 JSON:
 {{
-  "new_code": "优化后的完整 Python 代码",
+  "new_code": "优化后的完整 {lang_name} 代码",
   "new_description": "更新后的描述"
 }}"#,
             name = spec.type_name,
             desc = spec.description,
+            lang_name = lang_name,
+            lang_tag = lang_tag,
             code = spec.executor_code,
         );
 
@@ -1450,6 +1674,7 @@ fn impl_type_name(impl_: &crate::genome::ActionImpl) -> String {
         crate::genome::ActionImpl::Composite { .. } => "Composite".into(),
         crate::genome::ActionImpl::Native { .. } => "Native".into(),
         crate::genome::ActionImpl::Script { .. } => "Script".into(),
+        crate::genome::ActionImpl::Shell { .. } => "Shell".into(),
         crate::genome::ActionImpl::Custom { executor_type, .. } => {
             format!("Custom:{}", executor_type)
         }
@@ -1511,7 +1736,7 @@ mod tests {
             created_at: "123".into(),
             lineage: ExecutorLineage::default(),
         };
-        spec.register_executor(custom);
+        spec.register_executor(custom).unwrap();
         assert_eq!(spec.custom_executors.len(), 1);
         assert!(spec.get_executor("cached_script").is_some());
         assert_eq!(spec.meta_history.len(), 1);
@@ -1529,10 +1754,82 @@ mod tests {
             timeout_secs: 30,
             created_at: "123".into(),
             lineage: ExecutorLineage::default(),
-        });
+        })
+        .unwrap();
         let all = spec.all_executor_types();
         assert_eq!(all.len(), 6);
         assert!(all.contains(&"pipeline".to_string()));
+    }
+
+    #[test]
+    fn test_register_executor_rejects_path_traversal() {
+        let mut spec = RuntimeSpec::initial();
+        let bad_names = vec![
+            "../escape",
+            "..\\escape",
+            "/etc/passwd",
+            "a/b",
+            "a\\b",
+            "a b",
+            "",
+            "name_with_space ",
+        ];
+        for bad in bad_names {
+            let spec_obj = CustomExecutorSpec {
+                type_name: bad.into(),
+                description: "bad".into(),
+                params_schema: serde_json::json!({}),
+                executor_code: "".into(),
+                language: "python".into(),
+                timeout_secs: 10,
+                created_at: "".into(),
+                lineage: ExecutorLineage::default(),
+            };
+            let result = spec.register_executor(spec_obj);
+            assert!(result.is_err(), "应拒绝 type_name='{}'，但被接受了", bad);
+        }
+        assert!(spec.custom_executors.is_empty());
+    }
+
+    #[test]
+    fn test_register_executor_accepts_valid_names() {
+        let mut spec = RuntimeSpec::initial();
+        let valid = vec!["wasm", "cached_script", "my-exec-123", "A_B_C"];
+        for name in valid {
+            let spec_obj = CustomExecutorSpec {
+                type_name: name.into(),
+                description: "ok".into(),
+                params_schema: serde_json::json!({}),
+                executor_code: "".into(),
+                language: "python".into(),
+                timeout_secs: 10,
+                created_at: "".into(),
+                lineage: ExecutorLineage::default(),
+            };
+            assert!(
+                spec.register_executor(spec_obj).is_ok(),
+                "应接受 '{}'",
+                name
+            );
+        }
+        assert_eq!(spec.custom_executors.len(), 4);
+    }
+
+    #[test]
+    fn test_register_executor_rejects_long_name() {
+        let mut spec = RuntimeSpec::initial();
+        let long_name = "a".repeat(65);
+        let spec_obj = CustomExecutorSpec {
+            type_name: long_name,
+            description: "too long".into(),
+            params_schema: serde_json::json!({}),
+            executor_code: "".into(),
+            language: "python".into(),
+            timeout_secs: 10,
+            created_at: "".into(),
+            lineage: ExecutorLineage::default(),
+        };
+        assert!(spec.register_executor(spec_obj).is_err());
     }
 
     #[test]
@@ -1547,11 +1844,215 @@ mod tests {
             timeout_secs: 10,
             created_at: "123".into(),
             lineage: ExecutorLineage::default(),
-        });
+        })
+        .unwrap();
         let json = spec.to_json();
         let restored = RuntimeSpec::from_json(&json).unwrap();
         assert_eq!(restored.custom_executors.len(), 1);
         assert_eq!(restored.custom_executors[0].type_name, "test_exec");
+    }
+
+    #[tokio::test]
+    async fn test_candidate_executor_runs_without_registration() {
+        let platform = crate::platform::Platform::detect();
+        if platform.env.get("has_wasmtime").map(String::as_str) != Some("true")
+            || platform.env.get("has_wasm32_wasi").map(String::as_str) != Some("true")
+        {
+            return;
+        }
+        let storage = tempfile::tempdir().expect("创建临时目录失败");
+        let registry = ExecutorRegistry::new(storage.path());
+        let candidate = CustomExecutorSpec {
+            type_name: "candidate_wasm".into(),
+            description: "仅在候选态执行".into(),
+            params_schema: serde_json::json!({}),
+            executor_code: r#"println!("{{\"success\":true,\"input_len\":{}}}", __input.len());"#
+                .into(),
+            language: "rust".into(),
+            timeout_secs: 10,
+            created_at: "123".into(),
+            lineage: ExecutorLineage::default(),
+        };
+        let context = ExecutorContext {
+            capability_name: "candidate_test".into(),
+            action_name: "execute".into(),
+        };
+
+        let result = registry
+            .execute_candidate(
+                &candidate,
+                &serde_json::json!({}),
+                &serde_json::json!({"test": "hello"}),
+                &context,
+            )
+            .await
+            .expect("候选执行器应可在未注册时执行");
+
+        assert_eq!(result.get("success"), Some(&serde_json::json!(true)));
+        assert!(registry.get_executor("candidate_wasm").await.is_none());
+
+        let spec = registry.spec().await;
+        assert!(spec.custom_executors.is_empty());
+        assert!(spec.meta_history.is_empty());
+        assert_eq!(spec.meta_stats.executors_created, 0);
+        assert!(!storage.path().join("runtime_spec.json").exists());
+    }
+
+    #[tokio::test]
+    async fn test_candidate_rejects_host_privileged_language_before_execution() {
+        let storage = tempfile::tempdir().expect("创建临时目录失败");
+        let registry = ExecutorRegistry::new(storage.path());
+        let marker = storage.path().join("must_not_exist");
+        let candidate = CustomExecutorSpec {
+            type_name: "unsafe_python".into(),
+            description: "不可信候选".into(),
+            params_schema: serde_json::json!({}),
+            executor_code: format!(
+                "open({:?}, 'w').write('executed')\nprint('{{\"success\": true}}')",
+                marker
+            ),
+            language: "python".into(),
+            timeout_secs: 10,
+            created_at: "123".into(),
+            lineage: ExecutorLineage::default(),
+        };
+        let context = ExecutorContext {
+            capability_name: "candidate_test".into(),
+            action_name: "execute".into(),
+        };
+
+        let error = registry
+            .execute_candidate(
+                &candidate,
+                &serde_json::json!({}),
+                &serde_json::json!({}),
+                &context,
+            )
+            .await
+            .expect_err("全权限候选必须在执行前拒绝");
+        assert!(error.contains("仅允许 rust/wasm"));
+        assert!(!marker.exists(), "被拒候选不得产生宿主副作用");
+    }
+
+    #[tokio::test]
+    async fn test_reload_quarantines_legacy_unsafe_meta_artifact() {
+        let storage = tempfile::tempdir().expect("创建临时目录失败");
+        {
+            let registry = ExecutorRegistry::new(storage.path());
+            registry
+                .register(CustomExecutorSpec {
+                    type_name: "legacy_meta_python".into(),
+                    description: "旧版不安全元进化产物".into(),
+                    params_schema: serde_json::json!({}),
+                    executor_code: "print('{}')".into(),
+                    language: "python".into(),
+                    timeout_secs: 10,
+                    created_at: "123".into(),
+                    lineage: ExecutorLineage {
+                        origin: ExecutorOrigin::MetaGenerated,
+                        parent: None,
+                        generation: 1,
+                    },
+                })
+                .await;
+        }
+
+        let reloaded = ExecutorRegistry::new(storage.path());
+        assert!(
+            reloaded.get_executor("legacy_meta_python").await.is_none(),
+            "旧版全权限自动产物在重启加载时必须进入隔离"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_candidate_requires_strict_json_output() {
+        let platform = crate::platform::Platform::detect();
+        if platform.env.get("has_wasmtime").map(String::as_str) != Some("true")
+            || platform.env.get("has_wasm32_wasi").map(String::as_str) != Some("true")
+        {
+            return;
+        }
+        let storage = tempfile::tempdir().expect("创建临时目录失败");
+        let registry = ExecutorRegistry::new(storage.path());
+        let candidate = CustomExecutorSpec {
+            type_name: "invalid_output".into(),
+            description: "输出垃圾".into(),
+            params_schema: serde_json::json!({}),
+            executor_code: r#"println!("not json");"#.into(),
+            language: "rust".into(),
+            timeout_secs: 10,
+            created_at: "123".into(),
+            lineage: ExecutorLineage::default(),
+        };
+        let context = ExecutorContext {
+            capability_name: "candidate_test".into(),
+            action_name: "execute".into(),
+        };
+
+        let error = registry
+            .execute_candidate(
+                &candidate,
+                &serde_json::json!({}),
+                &serde_json::json!({}),
+                &context,
+            )
+            .await
+            .expect_err("垃圾输出不得被归一化为 success=true");
+        assert!(error.contains("JSON 对象"));
+    }
+
+    #[tokio::test]
+    async fn test_failed_candidate_does_not_replace_registered_executor() {
+        let storage = tempfile::tempdir().expect("创建临时目录失败");
+        let registry = ExecutorRegistry::new(storage.path());
+        registry
+            .register(CustomExecutorSpec {
+                type_name: "same_name".into(),
+                description: "已注册版本".into(),
+                params_schema: serde_json::json!({}),
+                executor_code: "original code".into(),
+                language: "python".into(),
+                timeout_secs: 10,
+                created_at: "123".into(),
+                lineage: ExecutorLineage::default(),
+            })
+            .await;
+
+        let candidate = CustomExecutorSpec {
+            type_name: "same_name".into(),
+            description: "无效候选版本".into(),
+            params_schema: serde_json::json!({}),
+            executor_code: "candidate code".into(),
+            language: "unsupported".into(),
+            timeout_secs: 10,
+            created_at: "456".into(),
+            lineage: ExecutorLineage::default(),
+        };
+        let context = ExecutorContext {
+            capability_name: "candidate_test".into(),
+            action_name: "execute".into(),
+        };
+
+        let error = registry
+            .execute_candidate(
+                &candidate,
+                &serde_json::json!({}),
+                &serde_json::json!({}),
+                &context,
+            )
+            .await
+            .expect_err("不支持的候选语言应测试失败");
+        assert!(error.contains("仅允许 rust/wasm"));
+
+        let registered = registry
+            .get_executor("same_name")
+            .await
+            .expect("原执行器应仍在注册表");
+        assert_eq!(registered.executor_code, "original code");
+        let spec = registry.spec().await;
+        assert_eq!(spec.custom_executors.len(), 1);
+        assert_eq!(spec.meta_history.len(), 1);
+        assert_eq!(spec.meta_stats.executors_created, 1);
     }
 
     #[test]

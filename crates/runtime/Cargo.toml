@@ -17,6 +17,10 @@ reqwest.workspace = true
 futures.workspace = true
 regex = "1"
 libloading = "0.8"
+axum.workspace = true
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
 
 [dev-dependencies]
 capabilities = { path = "../capabilities" }
+tempfile = "3"

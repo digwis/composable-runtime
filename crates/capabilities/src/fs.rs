@@ -1,11 +1,47 @@
-use runtime::{Capability, Message, MessageError, MessageResult};
+use runtime::{Capability, Message, MessageError, MessageResult, PathGuard};
 use serde::{Deserialize, Serialize};
 
 /// 文件系统能力 — 操作系统级文件读写
 ///
 /// 原生能力种子：让 AI 能操作真实文件系统，
 /// 是构建"写网站""写代码""管理项目"等高阶能力的基础。
-pub struct FsCapability;
+///
+/// 内置 `PathGuard` 硬约束：当 `path_guard` 处于限制模式时，
+/// write/mkdir/delete/move 的目标路径必须落在允许的目录内。
+/// AI agent 无法绕过此约束 — 它在代码执行层强制生效。
+pub struct FsCapability {
+    path_guard: PathGuard,
+}
+
+impl FsCapability {
+    /// 创建无限制的 FsCapability（默认行为，向后兼容）
+    pub fn new() -> Self {
+        Self {
+            path_guard: PathGuard::unrestricted(),
+        }
+    }
+
+    /// 创建受路径限制的 FsCapability
+    pub fn with_path_guard(path_guard: PathGuard) -> Self {
+        Self { path_guard }
+    }
+
+    /// 校验写入路径，不在白名单内则返回错误
+    fn check_write_path(&self, path: &str) -> Result<(), MessageError> {
+        self.path_guard
+            .check(path)
+            .map_err(|msg| MessageError::Internal {
+                capability: "fs".into(),
+                detail: format!("🚫 路径被拒: {}", msg),
+            })
+    }
+}
+
+impl Default for FsCapability {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[derive(Deserialize)]
 struct FsReadInput {
@@ -148,6 +184,9 @@ impl Capability for FsCapability {
                 let input: FsWriteInput = msg.payload_as()?;
                 let path = std::path::Path::new(&input.path);
 
+                // 硬约束：检查写入路径是否在允许范围内
+                self.check_write_path(&input.path)?;
+
                 if let Some(parent) = path.parent() {
                     if !parent.exists() {
                         tokio::fs::create_dir_all(parent).await.map_err(|e| {
@@ -204,6 +243,9 @@ impl Capability for FsCapability {
             "mkdir" => {
                 let input: FsPathInput = msg.payload_as()?;
                 let path = std::path::Path::new(&input.path);
+
+                // 硬约束：检查创建目录路径是否在允许范围内
+                self.check_write_path(&input.path)?;
 
                 let created = if path.exists() {
                     false
@@ -286,6 +328,9 @@ impl Capability for FsCapability {
                 let input: FsPathInput = msg.payload_as()?;
                 let path = std::path::Path::new(&input.path);
 
+                // 硬约束：检查删除路径是否在允许范围内
+                self.check_write_path(&input.path)?;
+
                 let deleted = if path.is_dir() {
                     tokio::fs::remove_dir_all(&input.path).await.map_err(|e| {
                         MessageError::Internal {
@@ -321,6 +366,10 @@ impl Capability for FsCapability {
 
             "move" => {
                 let input: FsMoveInput = msg.payload_as()?;
+
+                // 硬约束：检查源路径和目标路径是否都在允许范围内
+                self.check_write_path(&input.from)?;
+                self.check_write_path(&input.to)?;
 
                 if let Some(parent) = std::path::Path::new(&input.to).parent() {
                     if !parent.exists() {
